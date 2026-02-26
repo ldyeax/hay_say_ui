@@ -1,4 +1,4 @@
-apt -y update && apt -y install git vim
+apt -y update && apt -y install git vim redis
 
 apt -y install megacmd
 
