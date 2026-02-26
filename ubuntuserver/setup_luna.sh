@@ -9,7 +9,6 @@ else
 fi
 source .venv/bin/activate
 
-pip install -r requirements.txt
 
 export PATH="$PATH:$HOME_DIR/.local/bin"
 
@@ -22,4 +21,13 @@ if [ -d "hay_say_ui" ]; then
 	git pull
 else
 	git clone --recursive https://github.com/ldyeax/hay_say_ui
+	cd hay_say_ui
 fi
+
+cd ubuntuserver
+
+pip install -r requirements.txt
+
+# install user systemd service redis.service and immediately activate
+
+systemctl --user enable --now ./redis.service

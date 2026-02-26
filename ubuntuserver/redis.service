@@ -1,0 +1,27 @@
+[Unit]
+Description=User Redis Server
+After=network.target
+
+[Service]
+Type=simple
+
+ExecStart=/usr/bin/redis-server \
+	--bind 127.0.0.1 \
+	--port 6379 \
+	--protected-mode yes \
+	--save "" \
+	--appendonly no \
+	--dir %h \
+	--unixsocket %h/redis.sock \
+	--unixsocketperm 700
+
+ExecStop=/usr/bin/redis-cli -h 127.0.0.1 -p 6379 shutdown nosave
+
+Restart=on-failure
+RestartSec=2
+
+# Ensure clean shutdown
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target

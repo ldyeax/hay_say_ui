@@ -1,9 +1,9 @@
-dash[celery] \
-dash-bootstrap-components \
-hay_say_common \
-gdown \
-jsonschema3 \
-huggingface_hub1 \
-pymongo \
-gunicorn0 \
-apscheduler4
+dash[celery]
+dash-bootstrap-components
+hay_say_common
+gdown
+jsonschema
+huggingface_hub
+pymongo
+gunicorn
+apscheduler

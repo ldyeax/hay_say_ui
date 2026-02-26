@@ -91,16 +91,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Start redis (no persistence, local only)
-redis-server \
-	--bind "$REDIS_BIND" \
-	--port "$REDIS_PORT" \
-	--protected-mode yes \
-	--save "" \
-	--appendonly no \
-	--daemonize yes \
-	--pidfile "$REDIS_PID" \
-	--logfile "$REDIS_LOG"
+systemctl --user start redis
 
 # Wait until it's up
 while true; do
