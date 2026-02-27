@@ -10,7 +10,7 @@ import plotly_celery_common as pcc
 from generator import generate_and_prepare_postprocessed_display
 
 # Set up a background callback manager
-REDIS_URL = 'redis://redis:6379/2'
+REDIS_URL = 'redis+socket:///home/luna/redis.sock?virtual_host=2'
 celery_app = Celery(__name__, broker=REDIS_URL, backend=REDIS_URL)
 background_callback_manager = CeleryManager(celery_app)
 

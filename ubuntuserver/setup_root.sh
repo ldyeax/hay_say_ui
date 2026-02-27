@@ -1,4 +1,4 @@
-apt -y update && apt -y install git vim redis
+apt -y update && apt -y install git vim redis portaudio19-dev portaudio19-doc
 
 apt -y install megacmd
 

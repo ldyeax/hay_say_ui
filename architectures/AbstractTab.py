@@ -135,6 +135,7 @@ class AbstractTab(ABC):
 
     @property
     def hardware_options(self):
+        print("GPU available: " + str(self.is_gpu_available), flush=True)
         return [*((['GPU']) if self.is_gpu_available else ()), 'CPU']
 
     @property

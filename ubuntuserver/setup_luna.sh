@@ -1,5 +1,13 @@
 export LIMITED_USER=luna
-export HOME_DIR=/home/$LIMITED_USER
+export HOME_DIR="/home/$LIMITED_USER"
+export HOSTALIASES="$HOME_DIR/hosts"
+export REDIS_BIND="127.0.0.1"
+export REDIS_PORT="7379"
+export REDIS_PID="$HOME_DIR/redis.pid"
+export REDIS_LOG="$HOME_DIR/redis.log"
+export HAY_SAY_UI="$HOME_DIR/hay_say/hay_say_ui"
+export SERVER_DIR="$HAY_SAY_UI/ubuntuserver"
+export MODELS_CONFIG_DIR="$SERVER_DIR/models"
 
 cd $HOME_DIR
 if [ -d ".venv" ]; then
@@ -31,3 +39,5 @@ pip install -r requirements.txt
 # install user systemd service redis.service and immediately activate
 
 systemctl --user enable --now ./redis.service
+
+source $SERVER_DIR/venvs.sh

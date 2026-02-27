@@ -7,7 +7,7 @@ Type=simple
 
 ExecStart=/usr/bin/redis-server \
 	--bind 127.0.0.1 \
-	--port 6379 \
+	--port 7379 \
 	--protected-mode yes \
 	--save "" \
 	--appendonly no \
@@ -15,7 +15,7 @@ ExecStart=/usr/bin/redis-server \
 	--unixsocket %h/redis.sock \
 	--unixsocketperm 700
 
-ExecStop=/usr/bin/redis-cli -h 127.0.0.1 -p 6379 shutdown nosave
+ExecStop=/usr/bin/redis-cli -h 127.0.0.1 -p 7379 shutdown nosave
 
 Restart=on-failure
 RestartSec=2
