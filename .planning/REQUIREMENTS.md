@@ -67,31 +67,31 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FLOW-01 | Phase TBD | Pending |
-| FLOW-02 | Phase TBD | Pending |
-| FLOW-03 | Phase TBD | Pending |
-| FLOW-04 | Phase TBD | Pending |
-| MODL-01 | Phase TBD | Pending |
-| MODL-02 | Phase TBD | Pending |
-| MODL-03 | Phase TBD | Pending |
-| MODL-04 | Phase TBD | Pending |
-| GENX-01 | Phase TBD | Pending |
-| GENX-02 | Phase TBD | Pending |
-| GENX-03 | Phase TBD | Pending |
-| PERF-01 | Phase TBD | Pending |
-| PERF-02 | Phase TBD | Pending |
-| PERF-03 | Phase TBD | Pending |
-| PERF-04 | Phase TBD | Pending |
-| PLAT-01 | Phase TBD | Pending |
-| PLAT-02 | Phase TBD | Pending |
-| DOCS-01 | Phase TBD | Pending |
-| DOCS-02 | Phase TBD | Pending |
+| FLOW-01 | Phase 2 | Pending |
+| FLOW-02 | Phase 2 | Pending |
+| FLOW-03 | Phase 2 | Pending |
+| FLOW-04 | Phase 2 | Pending |
+| MODL-01 | Phase 1 | Pending |
+| MODL-02 | Phase 3 | Pending |
+| MODL-03 | Phase 3 | Pending |
+| MODL-04 | Phase 3 | Pending |
+| GENX-01 | Phase 2 | Pending |
+| GENX-02 | Phase 2 | Pending |
+| GENX-03 | Phase 3 | Pending |
+| PERF-01 | Phase 4 | Pending |
+| PERF-02 | Phase 4 | Pending |
+| PERF-03 | Phase 4 | Pending |
+| PERF-04 | Phase 4 | Pending |
+| PLAT-01 | Phase 1 | Pending |
+| PLAT-02 | Phase 1 | Pending |
+| DOCS-01 | Phase 5 | Pending |
+| DOCS-02 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 19 total
-- Mapped to phases: 0
-- Unmapped: 19
+- Mapped to phases: 19
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-27*
-*Last updated: 2026-02-27 after initial definition*
+*Last updated: 2026-02-27 after roadmap mapping*
