@@ -1,0 +1,9 @@
+__pycache__/
+_requirements.txt
+hubert/__pycache__
+inference/__pycache__
+inference/chunks_temp.json
+raw/
+vdecoder/__pycache__
+vdecoder/hifigan/__pycache__
+*.pt

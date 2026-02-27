@@ -1,0 +1,37 @@
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch
+torchvision
+Flask
+Flask_Cors
+gradio
+#numpy
+numpy
+#playsound
+playsound==1.2.2
+#playsound
+PyAudio
+pydub
+#pyworld
+pyworld
+#requests
+requests
+scipy
+#sounddevice
+sounddevice
+#SoundFile
+SoundFile
+#starlette
+starlette
+#torch
+#torchaudio
+#torch @ https://download.pytorch.org/whl/cu130
+#torchvision @ https://download.pytorch.org/whl/cu130
+tqdm
+scikit-maad
+praat-parselmouth
+onnx
+onnxsim
+onnxoptimizer
+hay_say_common
+jsonschema==4.19.1
+torchaudio
