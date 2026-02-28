@@ -1,4 +1,6 @@
-#!/usr/bin/env bash
+SCRIPT_DIR="/home/luna/hay_say/hay_say_ui/ubuntuserver"
+source "$SCRIPT_DIR/variables.sh"
+
 # start_luna.sh
 set -euo pipefail
 
@@ -105,16 +107,17 @@ systemctl --user start redis
 # Wait until it's up
 while true; do
 	if redis-cli -h "$REDIS_BIND" -p "$REDIS_PORT" ping >/dev/null 2>&1; then
+		echo "Redis is up on $REDIS_BIND:$REDIS_PORT (log: $REDIS_LOG)"
 		break
 	fi
 	echo "Waiting for redis on $REDIS_BIND:$REDIS_PORT.."
 	sleep 1
 done
 
-echo "Redis is up on $REDIS_BIND:$REDIS_PORT (log: $REDIS_LOG)"
 
 while true; do
 	if [[ -e $REDIS_SOCK ]]; then
+		echo "Found redis sock at $REDIS_SOCK"
 		break
 	fi
 	echo "Waiting for redis sock at $REDIS_SOCK.."
