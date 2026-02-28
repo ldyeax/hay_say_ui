@@ -31,7 +31,7 @@ echo "Copying setup files for limited user"
 #cp setup_luna.sh $HOME_DIR && chown $LIMITED_USER:$LIMITED_USER $HOME_DIR/setup_luna.sh
 
 cat variables.sh > "$HOME_DIR/setup_luna.sh"
-tail -n +2 setup_luna.sh >> "$HOME_DIR/setup_luna.sh"
+tail -n +3 setup_luna.sh >> "$HOME_DIR/setup_luna.sh"
 
 #cp requirements.txt $HOME_DIR && chown $LIMITED_USER:$LIMITED_USER $HOME_DIR/requirements.txt
 #rm -rf $HOME_DIR/.venv

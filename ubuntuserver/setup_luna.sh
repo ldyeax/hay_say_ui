@@ -1,4 +1,5 @@
 SCRIPT_DIR="/home/luna/hay_say/hay_say_ui/ubuntuserver"
+source "$SCRIPT_DIR/variables.sh"
 
 set -euo pipefail
 
@@ -8,7 +9,6 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$PATH:$HOME_DIR/.local/bin"
 echo Set PATH: $PATH
 
-source "$SCRIPT_DIR/variables.sh"
 echo Moving into HOME_DIR=$HOME_DIR
 cd "$HOME_DIR"
 echo HOME_DIR PWD=$PWD
