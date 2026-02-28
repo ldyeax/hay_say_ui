@@ -27,6 +27,7 @@ for dir in "$MODELS_VENVS_CONFIG_DIR"/*/; do
 		uv venv --seed "$venv_path"
 	fi
 	source "$venv_path/bin/activate"
+	bash "$dir/setup.sh"
 	pip install -r "$dir/requirements.txt"
 	deactivate
 done

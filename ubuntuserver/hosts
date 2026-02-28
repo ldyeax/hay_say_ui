@@ -1,0 +1,8 @@
+127.0.0.1 redis
+127.0.0.1 controllable_talknet_server
+127.0.0.1 so_vits_svc_3_server
+127.0.0.1 so_vits_svc_4_server
+127.0.0.1 so_vits_svc_5_server
+127.0.0.1 rvc_server
+127.0.0.1 styletts_2_server
+127.0.0.1 gpt_so_vits_server
