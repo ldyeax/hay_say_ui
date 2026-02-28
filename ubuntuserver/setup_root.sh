@@ -1,6 +1,15 @@
+SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+
 apt -y update && apt -y install git vim redis portaudio19-dev portaudio19-doc
 
-apt -y install megacmd
+#wget https://mega.nz/linux/repo/xUbuntu_25.10/amd64/megacmd-xUbuntu_25.10_amd64.deb && apt -y install "$PWD/megacmd-xUbuntu_25.10_amd64.deb"
+if [[ $(which megacmd) ]] then
+	echo "megacmd found"
+else
+	echo "Installing megacmd.."
+	bash "$SCRIPT_DIR/megacmd.sh"
+fi
+#apt -y install megacmd
 
 export LIMITED_USER=luna
 export HOME_DIR=/home/$LIMITED_USER
@@ -18,7 +27,11 @@ mkdir /home/luna/hay_say && chown $LIMITED_USER:$LIMITED_USER /home/luna/hay_say
 	mkdir /home/luna/hay_say/audio_cache && chown $LIMITED_USER:$LIMITED_USER /home/luna/hay_say/audio_cache
 
 echo "Copying setup files for limited user"
-cp setup_luna.sh $HOME_DIR && chown $LIMITED_USER:$LIMITED_USER $HOME_DIR/setup_luna.sh
-cp requirements.txt $HOME_DIR && chown $LIMITED_USER:$LIMITED_USER $HOME_DIR/requirements.txt
-rm -rf $HOME_DIR/.venv
+#cp setup_luna.sh $HOME_DIR && chown $LIMITED_USER:$LIMITED_USER $HOME_DIR/setup_luna.sh
+
+cat variables.sh > "$HOME_DIR/setup_luna.sh"
+tail -n +2 setup_luna.sh >> "$HOME_DIR/setup_luna.sh"
+
+#cp requirements.txt $HOME_DIR && chown $LIMITED_USER:$LIMITED_USER $HOME_DIR/requirements.txt
+#rm -rf $HOME_DIR/.venv
 echo "Done"
