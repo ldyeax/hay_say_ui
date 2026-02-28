@@ -113,6 +113,13 @@ done
 
 echo "Redis is up on $REDIS_BIND:$REDIS_PORT (log: $REDIS_LOG)"
 
+while true; do
+	if [[ -e $REDIS_SOCK ]]; then
+		break
+	fi
+	echo "Waiting for redis sock at $REDIS_SOCK.."
+done
+
 cd "$HAY_SAY_UI"
 
 screen_pids=()

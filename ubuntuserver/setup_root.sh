@@ -1,7 +1,7 @@
 SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 
 #apt -y update && 
-apt -y install git vim redis portaudio19-dev portaudio19-doc
+apt -y install git vim redis portaudio19-dev portaudio19-doc gunicorn celery
 
 #wget https://mega.nz/linux/repo/xUbuntu_25.10/amd64/megacmd-xUbuntu_25.10_amd64.deb && apt -y install "$PWD/megacmd-xUbuntu_25.10_amd64.deb"
 if [[ $(which mega-cmd) ]] then
