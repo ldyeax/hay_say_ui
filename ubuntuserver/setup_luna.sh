@@ -1,4 +1,9 @@
 SCRIPT_DIR="/home/luna/hay_say/hay_say_ui/ubuntuserver"
+
+set -euo pipefail
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 source "$SCRIPT_DIR/variables.sh"
 echo Moving into HOME_DIR=$HOME_DIR
 cd "$HOME_DIR"
