@@ -139,10 +139,13 @@ rm -f "$SCREEN_CPU_LOG"
 echo "Starting celery_generate_cpu in screen session 'celery_generate_cpu' (log: $SCREEN_CPU_LOG)"
 screen -L -Logfile "$SCREEN_CPU_LOG" -dmS celery_generate_cpu "$SERVER_DIR/celery_generate_cpu.sh"
 
+echo "Starting gunicorn"
 gunicorn \
 	--config=server_initialization.py \
 	--workers 6 \
 	--bind 0.0.0.0:6573 'wsgi:get_server(enable_model_management=True, update_model_lists_on_startup=False, enable_session_caches=False, migrate_models=True, cache_implementation="file", architectures=["ControllableTalkNet", "SoVitsSvc3", "SoVitsSvc4", "SoVitsSvc5", "Rvc", "StyleTTS2", "GPTSoVITS"])' &
+
+sleep 1
 
 # loop to make sure screen sessions all exist, if not call cleanup and exit
 

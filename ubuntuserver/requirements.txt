@@ -1,4 +1,4 @@
-dash[celery]>=3.0.4,<4.0.0
+dash[celery]<3.0.0
 dash-bootstrap-components
 hay_say_common
 gdown

@@ -150,11 +150,14 @@ def split_list_by_n(list_collection, n, pre=0):
 
 class Svc(object):
     def __init__(self, net_g_path, config_path, hubert_path="hubert/hubert-soft-0d54a1f4.pt",
-                 onnx=False):
+                 onnx=False, device=None):
         self.onnx = onnx
         self.net_g_path = net_g_path
         self.hubert_path = hubert_path
-        self.dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if device is not None:
+            self.dev = torch.device(device)
+        else:
+            self.dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.net_g_ms = None
         self.hps_ms = utils.get_hparams_from_file(config_path)
         self.target_sample = self.hps_ms.data.sampling_rate
@@ -165,8 +168,7 @@ class Svc(object):
         self.spk2id = self.hps_ms.spk
         # 加载hubert
         self.hubert_soft = hubert_model.hubert_soft(hubert_path)
-        if torch.cuda.is_available():
-            self.hubert_soft = self.hubert_soft.cuda()
+        self.hubert_soft = self.hubert_soft.to(self.dev)
         self.load_model()
 
     def load_model(self):
