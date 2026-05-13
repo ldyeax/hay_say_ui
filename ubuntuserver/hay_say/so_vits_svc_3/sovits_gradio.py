@@ -16,20 +16,20 @@ class VitsGradio:
                     with gr.Column():
                         with gr.Row():
                             with gr.Column():
-                                self.srcaudio = gr.Audio(label = "输入音频")
-                                self.btnVC = gr.Button("说话人转换")
+                                self.srcaudio = gr.Audio(label = "Input Audio")
+                                self.btnVC = gr.Button("Voice Conversion")
                             with gr.Column():
-                                self.dsid = gr.Dropdown(label = "目标角色", choices = self.lspk)
-                                self.tran = gr.Slider(label = "升降调", maximum = 60, minimum = -60, step = 1, value = 0)
-                                self.th = gr.Slider(label = "切片阈值", maximum = 32767, minimum = -32768, step = 0.1, value = -40)
+                                self.dsid = gr.Dropdown(label = "Target Speaker", choices = self.lspk)
+                                self.tran = gr.Slider(label = "Pitch Shift", maximum = 60, minimum = -60, step = 1, value = 0)
+                                self.th = gr.Slider(label = "Slice Threshold", maximum = 32767, minimum = -32768, step = 0.1, value = -40)
                         with gr.Row():
                             self.VCOutputs = gr.Audio()
                 self.btnVC.click(self.so.inference, inputs=[self.srcaudio,self.dsid,self.tran,self.th], outputs=[self.VCOutputs])
             with gr.Tab("SelectModel"):
                 with gr.Column():
-                    modelstrs = gr.Dropdown(label = "模型", choices = self.modelPaths, value = self.modelPaths[0], type = "value")
-                    devicestrs = gr.Dropdown(label = "设备", choices = ["cpu","cuda"], value = "cpu", type = "value")
-                    btnMod = gr.Button("载入模型")
+                    modelstrs = gr.Dropdown(label = "Model", choices = self.modelPaths, value = self.modelPaths[0], type = "value")
+                    devicestrs = gr.Dropdown(label = "Device", choices = ["cpu","cuda"], value = "cpu", type = "value")
+                    btnMod = gr.Button("Load Model")
                     btnMod.click(self.loadModel, inputs=[modelstrs,devicestrs], outputs = [self.dsid,self.VoiceConversion])
 
     def loadModel(self, path, device):

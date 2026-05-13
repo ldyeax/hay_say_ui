@@ -9,7 +9,7 @@ import numpy as np
 import soundfile
 import maad
 
-cpu = False  # 是否使用CPU推断，若使用请改为True
+cpu = False  # Whether to use CPU inference; set to True if needed
 
 if cpu : os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
@@ -25,19 +25,23 @@ config_path = "/home/luna/hay_say/models/so_vits_svc_3/characters/Fluttershy/con
 svc_model = Svc(model_path, config_path)
 infer_tool.mkdir(["raw", "results"])
 
-# 支持多个wav文件，放在raw文件夹下
-clean_names = ["ebd41462f7ad749e75aa.flac"]
-trans = [1]
+# Supports multiple WAV files placed in the raw folder
+clean_names = ["4cbd55d21e2e3ed3a7ba.flac"]
+trans = [0]
+trans = [0]
 spk_list = ["Fluttershy (speaking)"]
-slice_db = -40  # 默认-40，嘈杂的音频可以-30，干声保留呼吸可以-50
-wav_format = 'flac'  # 音频输出格式
-clip = 0     # 音频自动切片，0为不切片，单位为秒/s
-lr = 1    # 交叉淡入时间，单位为秒/s
+slice_db = -40  # Default is -40; use -30 for noisy audio and -50 to preserve breaths in clean vocal tracks
+wav_format = 'flac'  # Audio output format
+clip = 0     # Automatic audio slicing; 0 means no slicing, unit: seconds
+lr = 1    # Crossfade duration, unit: seconds
 
 
 svc_model = Svc(model_path, config_path)
 infer_tool.mkdir(["raw", "results"])
 infer_tool.fill_a_to_b(trans, clean_names)
+
+jobs = []
+
 for clean_name, tran in zip(clean_names, trans):
     raw_audio_path = f"raw/{clean_name}"
     if "." not in raw_audio_path:
@@ -49,6 +53,14 @@ for clean_name, tran in zip(clean_names, trans):
     per_size = clip*audio_sr
     lg_size = int(lr*audio_sr)
     
+    jobs.append((audio_data, audio_sr, per_size, lg_size, spk_list, tran, clean_name))
+    
+def take_job():
+    global jobs
+    return jobs.pop(0)
+
+# gpu_num < 0 = cpu, gpu_num >= 0 = gpu id
+def do_job(gpu_num, audio_data, audio_sr, per_size, lg_size, spk_list, tran, clean_name):
     for spk in spk_list:
         audio = []
         for (slice_tag, data) in audio_data:
@@ -74,3 +86,5 @@ for clean_name, tran in zip(clean_names, trans):
                 else: audio.extend(list(_audio))
         res_path = f'./results/{clean_name}_{tran}key_{spk}.{wav_format}'
         soundfile.write(res_path, audio, svc_model.target_sample, format=wav_format)
+for job in jobs:
+    do_job(-1, *job)

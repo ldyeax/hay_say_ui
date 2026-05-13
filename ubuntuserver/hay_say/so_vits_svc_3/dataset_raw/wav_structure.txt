@@ -1,4 +1,4 @@
-数据集准备
+Dataset Preparation
 
 raw
 ├───speaker0
@@ -10,7 +10,7 @@ raw
     ├───...
     └───xxx7-xxx007.wav
 
-此外还需要编辑config.json
+You also need to edit `config.json`
 
 "n_speakers": 10
 

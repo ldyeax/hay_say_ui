@@ -81,6 +81,12 @@ def get_md5(content):
     return hashlib.new("md5", content).hexdigest()
 
 
+def load_audio_for_torch(audio_path):
+    source, sr = soundfile.read(audio_path, dtype="float32", always_2d=True)
+    source = torch.from_numpy(source.T)
+    return source, sr
+
+
 def resize2d_f0(x, target_len):
     source = np.array(x)
     source[source < 0.001] = np.nan
@@ -166,13 +172,13 @@ class Svc(object):
         for spk, sid in self.hps_ms.spk.items():
             self.speakers[sid] = spk
         self.spk2id = self.hps_ms.spk
-        # 加载hubert
+        # Load HuBERT
         self.hubert_soft = hubert_model.hubert_soft(hubert_path)
         self.hubert_soft = self.hubert_soft.to(self.dev)
         self.load_model()
 
     def load_model(self):
-        # 获取模型配置
+        # Load model configuration
         if self.onnx:
             raise NotImplementedError
             # self.net_g_ms = SynthesizerTrnForONNX(
@@ -205,7 +211,7 @@ class Svc(object):
 
 
     def get_unit_pitch(self, in_path, tran):
-        source, sr = torchaudio.load(in_path)
+        source, sr = load_audio_for_torch(in_path)
         source = torchaudio.functional.resample(source, sr, 16000)
         if len(source.shape) == 2 and source.shape[1] >= 2:
             source = torch.mean(source, dim=0).unsqueeze(0)
@@ -260,7 +266,7 @@ class Svc(object):
 #         stn_tst = soft
 #         x_tst = np.expand_dims(stn_tst, axis=0)
 #         x_tst_lengths = np.array([stn_tst.shape[0]], dtype=np.int64)
-#         # 使用ONNX Runtime进行推理
+        #         # Run inference with ONNX Runtime
 #         start = time.time()
 #         audio = self.vits_onnx_session.run(output_names=["audio"],
 #                                            input_feed={
@@ -279,7 +285,7 @@ class Svc(object):
 #         if len(source.shape) == 2 and source.shape[1] >= 2:
 #             source = torch.mean(source, dim=0).unsqueeze(0)
 #         source = source.unsqueeze(0)
-#         # 使用ONNX Runtime进行推理
+        #         # Run inference with ONNX Runtime
 #         start = time.time()
 #         units = self.hubert_onnx_session.run(output_names=["embed"],
 #                                              input_feed={"source": source.numpy()})[0]
@@ -305,10 +311,10 @@ class RealTimeVC:
     def __init__(self):
         self.last_chunk = None
         self.last_o = None
-        self.chunk_len = 16000  # 区块长度
-        self.pre_len = 3840  # 交叉淡化长度，640的倍数
+        self.chunk_len = 16000  # Chunk length
+        self.pre_len = 3840  # Crossfade length, a multiple of 640
 
-    """输入输出都是1维numpy 音频波形数组"""
+    """Input and output are both 1D NumPy audio waveform arrays."""
 
     def process(self, svc_model, speaker_id, f_pitch_change, input_wav_path):
         audio, sr = torchaudio.load(input_wav_path)
@@ -331,4 +337,3 @@ class RealTimeVC:
             self.last_chunk = audio[-self.pre_len:]
             self.last_o = audio
             return ret[self.chunk_len:2 * self.chunk_len]
-

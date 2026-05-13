@@ -9,7 +9,7 @@ import numpy as np
 import soundfile
 import maad
 
-cpu = False  # 是否使用CPU推断，若使用请改为True
+cpu = False  # Whether to use CPU inference; set to True if needed
 
 if cpu : os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
@@ -25,15 +25,15 @@ config_path = "configs/config.json"
 svc_model = Svc(model_path, config_path)
 infer_tool.mkdir(["raw", "results"])
 
-# 支持多个wav文件，放在raw文件夹下
-clean_names = ["君の知らない物語-src"]
-trans = [0]  # 音高调整，支持正负（半音）
-trans = [i for i in range(-12,13)]  # 一次性合成-12到+12的音高
-spk_list = ['yunhao']  # 每次同时合成多语者音色
-slice_db = -40  # 默认-40，嘈杂的音频可以-30，干声保留呼吸可以-50
-wav_format = 'flac'  # 音频输出格式
-clip = 0     # 音频自动切片，0为不切片，单位为秒/s
-lr = 1    # 交叉淡入时间，单位为秒/s
+# Supports multiple WAV files placed in the raw folder
+clean_names = ["sample-src"]
+trans = [0]  # Pitch adjustment, supports positive and negative values (semitones)
+trans = [i for i in range(-12,13)]  # Batch synthesize pitches from -12 to +12
+spk_list = ['yunhao']  # Synthesize multiple speaker timbres at once
+slice_db = -40  # Default is -40; use -30 for noisy audio and -50 to preserve breaths in clean vocal tracks
+wav_format = 'flac'  # Audio output format
+clip = 0     # Automatic audio slicing; 0 means no slicing, unit: seconds
+lr = 1    # Crossfade duration, unit: seconds
 
 
 svc_model = Svc(model_path, config_path)
@@ -86,3 +86,5 @@ def do_job(gpu_num, audio_data, audio_sr, per_size, lg_size, spk_list, tran, cle
                 else: audio.extend(list(_audio))
         res_path = f'./results/{clean_name}_{tran}key_{spk}.{wav_format}'
         soundfile.write(res_path, audio, svc_model.target_sample, format=wav_format)
+for job in jobs:
+    do_job(-1, *job)

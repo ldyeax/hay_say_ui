@@ -88,9 +88,9 @@ if __name__ == "__main__":
         wavs = ["/".join([args.source_dir, speaker, i]) for i in os.listdir(os.path.join(args.source_dir, speaker))]
         for wavpath in wavs:
             if not pattern.match(wavpath):
-                print(f"warning：文件名{wavpath}中包含非字母数字下划线，可能会导致错误。（也可能不会）")
+                print(f"warning: filename {wavpath} contains characters other than letters, digits, or underscores, which may cause errors (or may not).")
         if len(wavs) < 10:
-            print(f"warning：{speaker}数据集数量小于10条，请补充数据")
+            print(f"warning: the {speaker} dataset has fewer than 10 items; please add more data.")
         wavs = [i for i in wavs if i.endswith("wav")]
         shuffle(wavs)
         train += wavs[2:-2]

@@ -594,14 +594,18 @@ def register_tab_callbacks(architectures, enable_model_management):
 
 def parse_arguments(arguments):
     parser = argparse.ArgumentParser(prog='wsgi.py', description='A Unified Interface for Pony Voice Generation.')
-    parser.add_argument('--update_model_lists_on_startup', action='store_true', default=False, help='Causes Hay Say to download the latest model lists so that all the latest models appear in the character download menus.')
-    parser.add_argument('--enable_model_management', action='store_true', default=False, help='Enables the user to download and delete models.')
+    parser.add_argument('--update_model_lists_on_startup', action='store_true', default=True, help='Causes Hay Say to download the latest model lists so that all the latest models appear in the character download menus.')
+    parser.add_argument('--enable_model_management', action='store_true', default=True, help='Enables the user to download and delete models.')
     parser.add_argument('--enable_session_caches', action='store_true', default=False, help='Maintain separate caches for each session. If not enabled, a single cache is used for all sessions.')
     parser.add_argument('--cache_implementation', default='file', choices=hsc.cache_implementation_map.keys(), help='Selects an implementation for the audio cache, e.g. saving them to files or to a database.')
     parser.add_argument('--migrate_models', action='store_true', default=False, help='Automatically move models from the model pack directories and custom model directory to the new models directory when Hay Say starts.')
     # todo: this is hardcoded. fix it.
-    parser.add_argument('--architectures', nargs='*', choices=['ControllableTalkNet', 'SoVitsSvc3', 'SoVitsSvc4', 'SoVitsSvc5', 'Rvc', 'StyleTTS2', 'GPTSoVITS'], default=['ControllableTalkNet', 'SoVitsSvc3', 'SoVitsSvc4', 'SoVitsSvc5', 'Rvc', 'StyleTTS2', 'GPTSoVITS'], help='Selects which architectures are shown in the Hay Say UI')
-    return parser.parse_args(arguments)
+    parser.add_argument('--architectures', nargs='*', choices=['ControllableTalkNet', 'SoVitsSvc3', 'SoVitsSvc4', 'SoVitsSvc5', 'Rvc', 'StyleTTS2', 'GPTSoVITS'], default=[], help='Selects which architectures are shown in the Hay Say UI')
+    ret = parser.parse_args(arguments)
+    print('Command-line arguments:', flush=True)
+    for key, value in vars(ret).items():
+        print(f'  {key}: {value}', flush=True)
+    return ret
 
 
 def construct_app_layout(enable_model_management, cache_type, architectures, enable_session_caches):
@@ -661,6 +665,7 @@ def register_cache_cleanup_callback_if_needed(enable_session_caches, cache_type)
 
 def build_app(architectures, update_model_lists_on_startup=False, enable_model_management=False, enable_session_caches=False,
               cache_type='file', migrate_models=False):
+    print(f'main.py: architectures: {architectures}', flush=True)
     app = construct_app_layout(enable_model_management, cache_type, architectures, enable_session_caches)
     register_app_callbacks(architectures, enable_model_management, enable_session_caches, cache_type)
     add_model_management_components_if_needed(cache_type, enable_model_management, architectures, app)

@@ -23,14 +23,14 @@ model_path = "/home/luna/hay_say/models/so_vits_svc_3/characters/Fluttershy/G_58
 config_path = "/home/luna/hay_say/models/so_vits_svc_3/characters/Fluttershy/config.json"
 infer_tool.mkdir(["flutteraw", "flutteresults"])
 
-# 支持多个wav文件，放在flutteraw文件夹下
+# Supports multiple WAV files placed in the flutteraw folder
 clean_names = ["eruption.flac"]
-trans = [i for i in range(-12, 13)]  # 一次性合成-12到+12的音高
+trans = [i for i in range(-12, 13)]  # Batch synthesize pitches from -12 to +12
 spk_list = ["Fluttershy (speaking)"]
-slice_db = -40  # 默认-40，嘈杂的音频可以-30，干声保留呼吸可以-50
-wav_format = 'flac'  # 音频输出格式
-clip = 0     # 音频自动切片，0为不切片，单位为秒/s
-lr = 1    # 交叉淡入时间，单位为秒/s
+slice_db = -40  # Default is -40; use -30 for noisy audio and -50 to preserve breaths in clean vocal tracks
+wav_format = 'flac'  # Audio output format
+clip = 0     # Automatic audio slicing; 0 means no slicing, unit: seconds
+lr = 1    # Crossfade duration, unit: seconds
 
 # Detect all available devices: CPU + every CUDA GPU
 devices = ["cpu"] + [f"cuda:{i}" for i in range(torch.cuda.device_count())]

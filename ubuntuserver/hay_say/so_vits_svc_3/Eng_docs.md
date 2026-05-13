@@ -21,7 +21,7 @@ A singing voice conversion (SVC) model, using the SoftVC encoder to extract feat
 + Pretrained models [G_0.pth](https://huggingface.co/innnky/sovits_pretrained/resolve/main/G_0.pth) and [D_0.pth](https://huggingface.co/innnky/sovits_pretrained/resolve/main/D_0.pth)
   + Place under `logs/32k`.
   + Pretrained models are required, because from experiments, training from scratch can be rather unpredictable to say the least, and training with a pretrained model can greatly improve training speeds.
-  + The pretrained model includes云灏, 即霜, 辉宇·星AI, 派蒙, and 绫地宁宁, covering the common ranges of both male and female voices, and so it can be seen as a rather universal pretrained model.
+  + The pretrained model includes Yunhao, Jishuang, Huiyu Star AI, Paimon, and Ayachi Nene, covering the common ranges of both male and female voices, and so it can be seen as a rather universal pretrained model.
   + The pretrained model exludes the `optimizer speaker_embedding` section, rendering it only usable for pretraining and incapable of inferencing with.
 ```shell
 # For simple downloading.

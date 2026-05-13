@@ -1,15 +1,20 @@
+#!/usr/bin/env bash
 # celery_download.sh
 cd $HAY_SAY_UI
+
+SCRIPT_DIR="/home/luna/hay_say/hay_say_ui/ubuntuserver"
+ARCH_START_LUNA="$SCRIPT_DIR/arch_start_luna"
+ARCHITECTURE_ARGS=()
+if [[ -f "$ARCH_START_LUNA" ]]; then
+	while IFS= read -r arch || [[ -n "$arch" ]]; do
+		[[ -n "$arch" ]] && ARCHITECTURE_ARGS+=(--include_architecture "$arch")
+	done < "$ARCH_START_LUNA"
+fi
+
 celery \
 	--workdir ~/hay_say/hay_say_ui/ \
 	-A celery_download:celery_app \
 	worker \
 	--loglevel=INFO \
 	--concurrency 5 \
-	--include_architecture ControllableTalkNet \
-	--include_architecture SoVitsSvc3 \
-	--include_architecture SoVitsSvc4 \
-	--include_architecture SoVitsSvc5 \
-	--include_architecture Rvc \
-	--include_architecture StyleTTS2 \
-	--include_architecture GPTSoVITS 
+	"${ARCHITECTURE_ARGS[@]}"

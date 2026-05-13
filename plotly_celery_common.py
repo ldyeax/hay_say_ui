@@ -1,6 +1,7 @@
 import base64
 import datetime
 import hashlib
+import os
 
 from hay_say_common.cache import Stage
 
@@ -44,11 +45,28 @@ def architecture_map(cache=None, choices=None):
 
 
 _count = 0
+
+
+def resolve_architecture_choices(choices):
+    choices = list(choices)
+    if choices:
+        return choices
+
+    architecture_file = os.environ.get('HAY_SAY_ARCHITECTURES_FILE',
+                                       '/home/luna/hay_say/hay_say_ui/ubuntuserver/arch_start_luna')
+    if not os.path.exists(architecture_file):
+        return choices
+
+    with open(architecture_file) as file:
+        return [line.strip() for line in file.read().splitlines() if line.strip()]
+
+
 def construct_architecture_tabs(choices, cache_type):
     global _count
     _count = _count+1
     print("_count is: " + str(_count))
     cache = hsc.select_cache_implementation(cache_type)
+    choices = resolve_architecture_choices(choices)
     return [architecture_map(cache, choices)[choice] for choice in choices]
 
 

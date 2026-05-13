@@ -17,6 +17,13 @@ def get_server(update_model_lists_on_startup=False, enable_model_management=Fals
                cache_implementation='file', migrate_models=False, architectures=None):
     if architectures is None:
         architectures = []
+    print('get_server called with arguments:', flush=True)
+    print(f'  update_model_lists_on_startup: {update_model_lists_on_startup}', flush=True)
+    print(f'  enable_model_management: {enable_model_management}', flush=True)
+    print(f'  enable_session_caches: {enable_session_caches}', flush=True)
+    print(f'  cache_implementation: {cache_implementation}', flush=True)
+    print(f'  migrate_models: {migrate_models}', flush=True)
+    print(f'  architectures: {architectures}', flush=True)
     app = build_app(architectures, update_model_lists_on_startup, enable_model_management, enable_session_caches,
                     cache_implementation, migrate_models)
     return app.server

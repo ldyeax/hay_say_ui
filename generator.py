@@ -47,6 +47,8 @@ def generate(cache_type, gpu_id, session_data, selected_architectures, user_text
              args):
     print('generating on ' + ('CPU' if gpu_id == '' else ('GPU #' + str(gpu_id))), flush=True)
     cache = hsc.select_cache_implementation(cache_type)
+    print('args=' + str(args), flush=True)
+    print('selected_architectures=' + str(selected_architectures), flush=True)
     selected_tab_object = get_selected_tab_object(selected_architectures, args[0:len(selected_architectures)])
     relevant_inputs = get_inputs_for_selected_tab(selected_architectures, selected_tab_object,
                                                   args[len(selected_architectures):])
@@ -59,14 +61,37 @@ def generate(cache_type, gpu_id, session_data, selected_architectures, user_text
 
 
 def get_selected_tab_object(selected_architectures, hidden_states):
-    # Get the tab that is *not* hidden (i.e. hidden == False)
-    return {hidden: tab for hidden, tab in zip(hidden_states, selected_architectures)}.get(False)
+    if len(hidden_states) != len(selected_architectures):
+        raise Exception('Generate callback received ' + str(len(hidden_states)) + ' tab hidden states, but ' +
+                        str(len(selected_architectures)) + ' architectures are registered. This usually means the ' +
+                        'web server and celery worker were started with different architecture lists.')
+
+    visible_tabs = [tab for hidden, tab in zip(hidden_states, selected_architectures) if hidden is False]
+    if len(visible_tabs) != 1:
+        raise Exception('Expected exactly one selected architecture tab, but found ' + str(len(visible_tabs)) +
+                        '. hidden_states=' + str(hidden_states) + ', selected_architectures=' +
+                        str(selected_architectures))
+    return visible_tabs[0]
 
 
 def get_inputs_for_selected_tab(selected_architectures, tab_object, args):
     all_inputs = [item for sublist in [tab.input_ids for tab in selected_architectures] for item in sublist]
+    print('all_inputs=' + str(all_inputs), flush=True)
+    if len(args) != len(all_inputs):
+        raise Exception('Generate callback received ' + str(len(args)) + ' architecture input values, but ' +
+                        str(len(all_inputs)) + ' inputs are registered. This usually means the web server and celery ' +
+                        'worker were started with different architecture lists. all_inputs=' + str(all_inputs))
     indices_of_relevant_inputs = [index for index, item in enumerate(all_inputs) if
                                   item in tab_object.input_ids]
+    print('indices_of_relevant_inputs=' + str(indices_of_relevant_inputs), flush=True)
+    if len(indices_of_relevant_inputs) != len(tab_object.input_ids):
+        raise Exception('Number of relevant inputs does not match number of inputs for selected architecture. This '
+                        'is likely a bug in the code, so please report this to the software maintainers with the '
+                        'following information: \n\n' +
+                        'selected_architectures=' + str(selected_architectures) + '\n\n' +
+                        'tab_object.input_ids=' + str(tab_object.input_ids) + '\n\n' +
+                        'all_inputs=' + str(all_inputs) + '\n\n' +
+                        'indices_of_relevant_inputs=' + str(indices_of_relevant_inputs))
     return [args[i] for i in indices_of_relevant_inputs]
 
 

@@ -13,6 +13,8 @@ from flask import Flask, request
 from hay_say_common.cache import Stage
 from jsonschema.exceptions import ValidationError
 
+from inference_ubuntuserver import infer_ubuntuserver
+
 ARCHITECTURE_NAME = 'so_vits_svc_3'
 ARCHITECTURE_ROOT = os.path.join(hsc.ROOT_DIR, 'so_vits_svc_3')
 
@@ -27,7 +29,9 @@ PYTHON_EXECUTABLE = os.path.join(hsc.ROOT_DIR, '.venvs', 'so_vits_svc_3', 'bin',
 app = Flask(__name__)
 
 
-def register_methods(cache):
+
+
+def register_methods(cache, args, test_parse_inputs=None):
     @app.route('/generate', methods=['POST'])
     def generate() -> (str, int):
         code = 200
@@ -35,18 +39,25 @@ def register_methods(cache):
         try:
             input_filename_sans_extension, character, pitch_shift, output_filename_sans_extension, gpu_id, \
                 session_id = parse_inputs()
-            ensure_template_exists()
-            modify_inference_file(input_filename_sans_extension, character, pitch_shift, session_id)
+            if not args.ubuntuserver:
+                ensure_template_exists()
+                modify_inference_file(input_filename_sans_extension, character, pitch_shift, session_id)
             copy_input_audio(input_filename_sans_extension, session_id)
-            execute_program(gpu_id)
+            execute_program(args)
             copy_output(output_filename_sans_extension, session_id)
             hsc.clean_up(get_temp_files())
         except BadInputException:
             code = 400
             message = traceback.format_exc()
-        except Exception:
+        except Exception as e:
             code = 500
-            message = hsc.construct_full_error_message(ARCHITECTURE_ROOT, get_temp_files())
+            # print stack trace
+            traceback.print_exc()
+            try:
+                message = hsc.construct_full_error_message(ARCHITECTURE_ROOT, get_temp_files())
+            except RuntimeError as e2:
+                # probably a test case.
+                return
 
         # The message may contain quotes and curly brackets which break JSON syntax, so base64-encode the message.
         message = base64.b64encode(bytes(message, 'utf-8')).decode('utf-8')
@@ -61,6 +72,8 @@ def register_methods(cache):
         return hsc.get_gpu_info_from_another_venv(PYTHON_EXECUTABLE)
 
     def parse_inputs():
+        if test_parse_inputs is not None:
+            return test_parse_inputs
         schema = {
             'type': 'object',
             'properties': {
@@ -98,7 +111,10 @@ def register_methods(cache):
         output_filename_sans_extension = request.json['Output File']
         gpu_id = request.json['GPU ID']
         session_id = request.json['Session ID']
-        return input_filename_sans_extension, character, pitch_shift, output_filename_sans_extension, gpu_id, session_id
+        ret_arr = [input_filename_sans_extension, character, pitch_shift, output_filename_sans_extension, gpu_id, session_id]
+        print(str(ret_arr))
+        # return ret_arr exploded to individual variables
+        return tuple(ret_arr)
 
     class BadInputException(Exception):
         pass
@@ -138,8 +154,25 @@ def register_methods(cache):
         trans_line = construct_trans_line(pitch_shift)
         speaker_line = construct_speaker_line(character)
         return model_path_line, config_path_line, clean_names_line, trans_line, speaker_line
+    def construct_args(input_filename_sans_extension, character, pitch_shift, session_id):
+        ret = {}
+        model_path, config_path = get_model_and_config_paths(character)
+        clean_names = construct_clean_names_arg(input_filename_sans_extension, session_id)
+        trans_arg = construct_trans_arg(pitch_shift)
+        speaker_line = construct_speaker_arg(character)
+        ret['model_path'] = model_path
+        ret['config_path'] = config_path
+        ret['clean_names'] = clean_names
+        ret['trans'] = trans_arg
+        ret['spk_list'] = speaker_line
+        return ret
 
     def construct_model_and_config_path_lines(character):
+        model_path, config_path = get_model_and_config_paths(character)
+        model_path_line = 'model_path = "' + model_path + '"'
+        config_path_line = 'config_path = "' + config_path + '"'
+        return model_path_line, config_path_line
+    def construct_model_and_config_path_args(character):
         model_path, config_path = get_model_and_config_paths(character)
         model_path_line = 'model_path = "' + model_path + '"'
         config_path_line = 'config_path = "' + config_path + '"'
@@ -176,6 +209,9 @@ def register_methods(cache):
     def construct_clean_names_line(input_filename_sans_extension, session_id):
         check_file_exists(input_filename_sans_extension, session_id)
         return 'clean_names = ["' + input_filename_sans_extension + TEMP_FILE_EXTENSION + '"]'
+    def construct_clean_names_arg(input_filename_sans_extension, session_id):
+        check_file_exists(input_filename_sans_extension, session_id)
+        return [input_filename_sans_extension + TEMP_FILE_EXTENSION]
 
     def check_file_exists(input_filename_sans_extension, session_id):
         file_exists = cache.file_is_already_cached(Stage.PREPROCESSED, session_id, input_filename_sans_extension)
@@ -191,10 +227,21 @@ def register_methods(cache):
                             'e.g. -5 or 11')
         else:
             return 'trans = [' + str(pitch_shift) + ']'
+    def construct_trans_arg(pitch_shift):
+        try:
+            int(str(pitch_shift))
+        except ValueError:
+            raise Exception('The specified pitch shift, ' + str(pitch_shift) + ' should be an integer value, '
+                            'e.g. -5 or 11')
+        else:
+            return [int(str(pitch_shift))]
 
     def construct_speaker_line(character):
         speaker = get_speaker(character)
         return 'spk_list = ["' + speaker + '"]'
+    def construct_speaker_arg(character):
+        speaker = get_speaker(character)
+        return [speaker]
 
     def get_speaker(character):
         character_dir = hsc.character_dir(ARCHITECTURE_NAME, character)
@@ -237,9 +284,14 @@ def register_methods(cache):
         except Exception as e:
             raise Exception("Unable to copy file from Hay Say's audio cache to rvc's raw directory.") from e
 
-    def execute_program(gpu_id):
+    def execute_program(args):
+        input_filename_sans_extension, character, pitch_shift, output_filename_sans_extension, gpu_id, session_id = parse_inputs()
         env = hsc.select_hardware(gpu_id)
-        subprocess.run([PYTHON_EXECUTABLE, INFERENCE_CODE_PATH], env=env, cwd=ARCHITECTURE_ROOT)
+        if not args.ubuntuserver:
+            subprocess.run([PYTHON_EXECUTABLE, INFERENCE_CODE_PATH], env=env, cwd=ARCHITECTURE_ROOT)
+        else:
+            args_dict = construct_args(input_filename_sans_extension, character, pitch_shift, session_id)
+            infer_ubuntuserver(**args_dict, cpu=(gpu_id == -1))
 
     def copy_output(output_filename_sans_extension, session_id):
         filename = get_output_filename()
@@ -267,6 +319,9 @@ def register_methods(cache):
         output_files_to_clean = [os.path.join(OUTPUT_COPY_FOLDER, file) for file in os.listdir(OUTPUT_COPY_FOLDER)]
         input_files_to_clean = [os.path.join(RAW_COPY_FOLDER, file) for file in os.listdir(RAW_COPY_FOLDER)]
         return output_files_to_clean + input_files_to_clean
+    
+    if args.test1:
+        generate()
 
 
 def parse_arguments():
@@ -274,11 +329,19 @@ def parse_arguments():
                                      description='A webservice interface for voice conversion with so-vits-svc 3.0')
     parser.add_argument('--cache_implementation', default='file', choices=hsc.cache_implementation_map.keys(),
                         help='Selects an implementation for the audio cache, e.g. saving them to files or to a database.')
-    return parser.parse_args()
+    parser.add_argument('--ubuntuserver', default=False, action='store_true', help='Long-running server with arguments passed instead of copying template file')
+    parser.add_argument('--test1', default=False, action='store_true', help='svc3 test 1')
+    ret = parser.parse_args()
+    print('Arguments: ' + str(vars(ret)))
+    return ret
 
 
 if __name__ == '__main__':
     args = parse_arguments()
     cache = hsc.select_cache_implementation(args.cache_implementation)
-    register_methods(cache)
+    if args.test1:
+        register_methods(cache, args, ['4cbd55d21e2e3ed3a7ba', 'Fluttershy', 0, '7afa2e46e2d602c12edc', '', None])
+        exit(0)
+    else:
+        register_methods(cache, args)
     app.run(host='0.0.0.0', port=6575)

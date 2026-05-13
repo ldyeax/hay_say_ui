@@ -9,13 +9,18 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$PATH:$HOME_DIR/.local/bin"
 echo Set PATH: $PATH
 
+uv python install "$HAY_SAY_PYTHON_VERSION"
+if [ -d "$HAY_SAY_SHARED_PYTHON_LIB_DIR" ]; then
+	export LD_LIBRARY_PATH="$HAY_SAY_SHARED_PYTHON_LIB_DIR:${LD_LIBRARY_PATH:-}"
+fi
+
 echo Moving into HOME_DIR=$HOME_DIR
 cd "$HOME_DIR"
 echo HOME_DIR PWD=$PWD
 if [ -d ".venv" ]; then
 	echo "venv exists"
 else
-	uv venv --seed
+	uv venv --seed --python "$HAY_SAY_PYTHON_VERSION"
 fi
 source .venv/bin/activate
 
@@ -47,3 +52,6 @@ pip install -r requirements.txt
 systemctl --user enable --now ./redis.service
 
 #source $SERVER_DIR/venvs.sh
+
+cd /home/luna/hay_say/hay_say_ui/ubuntuserver
+bash symlinks.sh
