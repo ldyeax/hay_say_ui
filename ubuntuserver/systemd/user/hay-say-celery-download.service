@@ -1,0 +1,14 @@
+[Unit]
+Description=Hay Say model download worker
+PartOf=hay-say.target
+Requires=hay-say-redis.service
+After=hay-say-redis.service network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/hay-say/environment
+ExecStart=/usr/bin/env %h/.local/lib/hay-say/bin/run-service celery-download
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077

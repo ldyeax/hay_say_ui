@@ -1,6 +1,7 @@
 import base64
 import datetime
 import hashlib
+import json
 
 from hay_say_common.cache import Stage
 
@@ -15,39 +16,37 @@ from architectures.gpt_so_vits.GPTSoVITSTab import GPTSoVITSTab
 
 _memoized_architecture_map = None
 
+_architecture_classes = {
+    'ControllableTalkNet': ControllableTalknetTab,
+    'SoVitsSvc3': SoVitsSvc3Tab,
+    'SoVitsSvc4': SoVitsSvc4Tab,
+    'SoVitsSvc5': SoVitsSvc5Tab,
+    'Rvc': RvcTab,
+    'StyleTTS2': StyleTTS2Tab,
+    'GPTSoVITS': GPTSoVITSTab,
+}
+
 
 def architecture_map(cache=None, choices=None):
     global _memoized_architecture_map
-    # Sometimes, we just want a list of the architectures and don't have a cache object to pass in. You can't get a list
-    # of the architectures, however, until the architecture list is initialized.
-    if cache is None and _memoized_architecture_map is None:
-        raise Exception('The architecture map is not yet initialized. The first call to archtecture_map must pass a '
-                        '"cache" argument so it can be initialized.')
     if _memoized_architecture_map is None:
-        print("THIS SHOULD ONLY HAPPEN ONCE")
         _memoized_architecture_map = dict()
-        if 'ControllableTalkNet' in choices:
-            _memoized_architecture_map['ControllableTalkNet'] = ControllableTalknetTab(cache)
-        if 'SoVitsSvc3' in choices:
-            _memoized_architecture_map['SoVitsSvc3'] = SoVitsSvc3Tab(cache)
-        if 'SoVitsSvc4' in choices:
-            _memoized_architecture_map['SoVitsSvc4'] = SoVitsSvc4Tab(cache)
-        if 'SoVitsSvc5' in choices:
-            _memoized_architecture_map['SoVitsSvc5'] = SoVitsSvc5Tab(cache)
-        if 'Rvc' in choices:
-            _memoized_architecture_map['Rvc'] = RvcTab(cache)
-        if 'StyleTTS2' in choices:
-            _memoized_architecture_map['StyleTTS2'] = StyleTTS2Tab(cache)
-        if 'GPTSoVITS' in choices:
-            _memoized_architecture_map['GPTSoVITS'] = GPTSoVITSTab(cache)
+    if choices:
+        if cache is None:
+            raise ValueError('A cache is required when initializing architecture tabs')
+        for choice in choices:
+            if choice not in _architecture_classes:
+                raise ValueError(f'Unknown architecture: {choice}')
+            if choice not in _memoized_architecture_map:
+                _memoized_architecture_map[choice] = _architecture_classes[choice](cache)
+            else:
+                _memoized_architecture_map[choice].cache = cache
+    elif cache is None and not _memoized_architecture_map:
+        raise ValueError('The architecture map has not been initialized')
     return _memoized_architecture_map
 
 
-_count = 0
 def construct_architecture_tabs(choices, cache_type):
-    global _count
-    _count = _count+1
-    print("_count is: " + str(_count))
     cache = hsc.select_cache_implementation(cache_type)
     return [architecture_map(cache, choices)[choice] for choice in choices]
 
@@ -58,14 +57,12 @@ def select_architecture_tabs(choices):
 
 def convert_to_bools(*args):
     # intended for converting a list of checklist items from ['']/None to True/False, respectively
-    return [arg is not None for arg in args]
+    return [bool(arg) for arg in args]
 
 
 def compute_next_hash(current_hash, *args):
-    # concatenate current_hash with all the remaining arguments and then take the hash
-    # current_hash can be None.
-    base_string = str(current_hash).join([str(item) for item in args])
-    return hashlib.sha256(base_string.encode('utf-8')).hexdigest()[:20]
+    payload = json.dumps([current_hash, *args], sort_keys=True, separators=(',', ':'), default=str)
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:20]
 
 
 def prepare_src_attribute(src_bytes, mimetype):
@@ -115,8 +112,7 @@ def preprocess_bytes(bytes_raw, sr_raw, semitone_pitch, debug_pitch, reduce_nois
 
 def write_preprocessed_metadata(cache, hash_raw, hash_preprocessed, semitone_pitch, debug_pitch,
                                 reduce_noise, crop_silence, session_data):
-    preprocessed_metadata = cache.read_metadata(Stage.PREPROCESSED, session_data['id'])
-    preprocessed_metadata[hash_preprocessed] = {
+    entry = {
         'Raw File': hash_raw,
         'Options':
             {
@@ -127,4 +123,8 @@ def write_preprocessed_metadata(cache, hash_raw, hash_preprocessed, semitone_pit
             },
         'Time of Creation': datetime.datetime.now().strftime(hsc.cache.TIMESTAMP_FORMAT)
     }
-    cache.write_metadata(Stage.PREPROCESSED, session_data['id'], preprocessed_metadata)
+    cache.update_metadata(
+        Stage.PREPROCESSED,
+        session_data['id'],
+        lambda metadata: metadata.update({hash_preprocessed: entry}),
+    )

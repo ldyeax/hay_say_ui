@@ -1,0 +1,13 @@
+[Unit]
+Description=Hay Say native services
+Wants=hay-say-redis.service
+Wants=hay-say-runtime-manager.service
+Wants=hay-say-celery-download.service
+Wants=hay-say-celery-cpu.service
+Wants=hay-say-celery-gpu.service
+Wants=hay-say-ui.service
+After=network-online.target
+
+[Install]
+WantedBy=default.target
+

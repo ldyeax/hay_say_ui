@@ -24,12 +24,16 @@ CONFIG_FILE_EXTENSION_ALT = '.yaml'
 
 class StyleTTS2Tab(AbstractTab):
     @property
+    def cache_generated_output(self):
+        return False
+
+    @property
     def id(self):
         return STYLETTS2_ID
 
     @property
     def port(self):
-        return 6578
+        return 6580
 
     @property
     def label(self):
@@ -54,7 +58,19 @@ class StyleTTS2Tab(AbstractTab):
         )
 
     def meets_requirements(self, user_text, user_audio, selected_character):
-        return user_text is not None and selected_character is not None
+        return bool(user_text and user_text.strip()) and selected_character is not None
+
+    def meets_all_requirements(self, user_text, user_audio, selected_character, option_values):
+        if not self.meets_requirements(user_text, user_audio, selected_character):
+            return False
+        if len(option_values) != len(self.input_ids):
+            return False
+        reference_source = option_values[6]
+        if reference_source == USE_REFERENCE_AUDIO:
+            return user_audio is not None
+        if reference_source == USE_PRECOMPUTED_STYLE:
+            return option_values[9] is not None and option_values[10] is not None
+        return reference_source == DISABLE
 
     @property
     def options(self):
@@ -187,7 +203,8 @@ class StyleTTS2Tab(AbstractTab):
         return sorted(list(character_group_list.keys())) if character_group_list else None
 
     def style_traits(self, model, character):
-        trait_group_list = self.styles_nested_dict().get(model).get(character)
+        model_group = self.styles_nested_dict().get(model) or {}
+        trait_group_list = model_group.get(character)
         return sorted(list(trait_group_list.keys())) if trait_group_list else None
 
     def register_callbacks(self, enable_model_management):

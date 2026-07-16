@@ -60,6 +60,10 @@ class SoVitsSvc5Tab(AbstractTab):
     def input_ids(self):
         return [self.id+'-character', self.id+'-semitone-pitch']
 
+    @property
+    def pitch_batch_key(self):
+        return 'Pitch Shift'
+
     def construct_input_dict(self, session_data, *args):
         return {
             'Architecture': self.id,

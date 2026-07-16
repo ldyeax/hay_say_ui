@@ -1,0 +1,13 @@
+[Unit]
+Description=Hay Say Redis broker
+PartOf=hay-say.target
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/hay-say/environment
+ExecStart=/usr/bin/env %h/.local/lib/hay-say/bin/run-service redis
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+UMask=0077

@@ -1,0 +1,23 @@
+--extra-index-url https://download.pytorch.org/whl/cu118
+faiss-cpu==1.7.4
+ffmpeg-python==0.2.0
+Flask==2.3.3
+Flask-Cors==4.0.0
+fsspec==2023.5.0
+jsonschema==4.17.3
+librosa==0.9.1
+matplotlib==3.7.1
+numpy==1.26.2
+omegaconf==2.3.0
+praat-parselmouth==0.4.3
+pyworld==0.3.4
+scikit-learn==1.2.2
+scipy==1.10.1
+setuptools==80.9.0
+soundfile==0.12.1
+tensorboard==2.13.0
+torch==2.1.1+cu118
+torchaudio==2.1.1+cu118
+torchcrepe==0.0.19
+tqdm==4.65.0
+transformers==4.29.2

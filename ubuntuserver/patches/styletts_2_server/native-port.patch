@@ -1,0 +1,11 @@
+--- a/main.py
++++ b/main.py
+@@ -248,4 +248,7 @@
+     args = parse_arguments()
+     cache = hsc.select_cache_implementation(args.cache_implementation)
+     register_methods(cache)
+-    app.run(host='0.0.0.0', port=6578)
++    app.run(
++        host=os.environ.get('HAY_SAY_STYLETTS_2_HOST', '127.0.0.1'),
++        port=int(os.environ.get('HAY_SAY_STYLETTS_2_PORT', '6580')),
++    )

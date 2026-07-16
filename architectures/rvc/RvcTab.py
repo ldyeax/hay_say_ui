@@ -208,6 +208,10 @@ class RvcTab(AbstractTab):
                 self.id+'-voiceless-consonants-protection-ratio',
                 ]
 
+    @property
+    def pitch_batch_key(self):
+        return 'Pitch Shift'
+
     def construct_input_dict(self, session_data, *args):
         input_dict = {
             'Architecture': self.id,
@@ -221,4 +225,3 @@ class RvcTab(AbstractTab):
         if args[2] == 'harvest':
             input_dict['Filter Radius'] = int(args[3])
         return input_dict
-

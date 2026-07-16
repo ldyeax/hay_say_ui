@@ -89,6 +89,14 @@ class ControllableTalknetTab(AbstractTab):
                 self.id + '-auto-tune',
                 self.id + '-reduce-metallic-sound']
 
+    @property
+    def pitch_batch_key(self):
+        return 'Pitch Factor'
+
+    @property
+    def pitch_batch_bounds(self):
+        return -25, 25
+
     def construct_input_dict(self, session_data, *args):
         return {
             'Architecture': self.id,

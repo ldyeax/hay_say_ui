@@ -3,6 +3,7 @@ import sys
 import plotly_celery_common as pcc
 from main import build_app, parse_arguments
 from server_initialization import initialize_app
+from ui_auth import configure_basic_auth
 
 
 # todo: There's got to be a less repetitive way to do this.
@@ -14,11 +15,12 @@ from server_initialization import initialize_app
 # gunicorn --workers 1 --bind 0.0.0.0:6573 'wsgi:get_server(enable_model_management=True)'
 # See the parse_arguments method.
 def get_server(update_model_lists_on_startup=False, enable_model_management=False, enable_session_caches=False,
-               cache_implementation='file', migrate_models=False, architectures=None):
+               cache_implementation='file', migrate_models=False, architectures=None, enable_runtime_admin=None):
     if architectures is None:
         architectures = []
     app = build_app(architectures, update_model_lists_on_startup, enable_model_management, enable_session_caches,
-                    cache_implementation, migrate_models)
+                    cache_implementation, migrate_models, enable_runtime_admin)
+    configure_basic_auth(app.server)
     return app.server
 
 
@@ -32,5 +34,5 @@ if __name__ == '__main__':
     args = parse_arguments(sys.argv[1:])
     initialize_app(args.architectures, args.migrate_models, args.update_model_lists_on_startup)
     app = build_app(args.architectures, args.update_model_lists_on_startup, args.enable_model_management, args.enable_session_caches,
-                    args.cache_implementation, args.migrate_models)
+                    args.cache_implementation, args.migrate_models, args.enable_runtime_admin)
     app.run(host='0.0.0.0', port=6573, debug=True)

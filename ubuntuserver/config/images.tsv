@@ -1,0 +1,24 @@
+# version=1
+# runtime_id<TAB>image<TAB>container_path<TAB>destination_under_data_root
+controllable_talknet	hydrusbeta/hay_say:controllable_talknet_server	/home/luna/hay_say/controllable_talknet	runtime-sources/controllable_talknet
+controllable_talknet	hydrusbeta/hay_say:controllable_talknet_server	/home/luna/hay_say/controllable_talknet_server	runtime-sources/controllable_talknet_server
+controllable_talknet	hydrusbeta/hay_say:controllable_talknet_server	/home/luna/.cache/torch/NeMo	cache/torch/NeMo
+controllable_talknet	hydrusbeta/hay_say:controllable_talknet_server	/home/luna/nltk_data/corpora/cmudict	cache/nltk/corpora/cmudict
+controllable_talknet	hydrusbeta/hay_say:controllable_talknet_server	/home/luna/nltk_data/taggers/averaged_perceptron_tagger	cache/nltk/taggers/averaged_perceptron_tagger
+so_vits_svc_3	hydrusbeta/hay_say:so_vits_svc_3_server	/home/luna/hay_say/so_vits_svc_3	runtime-sources/so_vits_svc_3
+so_vits_svc_3	hydrusbeta/hay_say:so_vits_svc_3_server	/home/luna/hay_say/so_vits_svc_3_server	runtime-sources/so_vits_svc_3_server
+so_vits_svc_4	hydrusbeta/hay_say:so_vits_svc_4_server	/home/luna/hay_say/so_vits_svc_4	runtime-sources/so_vits_svc_4
+so_vits_svc_4	hydrusbeta/hay_say:so_vits_svc_4_server	/home/luna/hay_say/so_vits_svc_4_dot_1_stable	runtime-sources/so_vits_svc_4_dot_1_stable
+so_vits_svc_4	hydrusbeta/hay_say:so_vits_svc_4_server	/home/luna/hay_say/so_vits_svc_4_server	runtime-sources/so_vits_svc_4_server
+so_vits_svc_5	hydrusbeta/hay_say:so_vits_svc_5_server	/home/luna/hay_say/so_vits_svc_5_v1	runtime-sources/so_vits_svc_5_v1
+so_vits_svc_5	hydrusbeta/hay_say:so_vits_svc_5_server	/home/luna/hay_say/so_vits_svc_5_v2	runtime-sources/so_vits_svc_5_v2
+so_vits_svc_5	hydrusbeta/hay_say:so_vits_svc_5_server	/home/luna/hay_say/so_vits_svc_5_server	runtime-sources/so_vits_svc_5_server
+rvc	hydrusbeta/hay_say:rvc_server	/home/luna/hay_say/rvc	runtime-sources/rvc
+rvc	hydrusbeta/hay_say:rvc_server	/home/luna/hay_say/rvc_server	runtime-sources/rvc_server
+styletts_2	hydrusbeta/hay_say:styletts_2_server	/home/luna/hay_say/styletts_2	runtime-sources/styletts_2
+styletts_2	hydrusbeta/hay_say:styletts_2_server	/home/luna/hay_say/styletts_2_server	runtime-sources/styletts_2_server
+styletts_2	hydrusbeta/hay_say:styletts_2_server	/home/luna/nltk_data/tokenizers/punkt	cache/nltk/tokenizers/punkt
+gpt_so_vits	hydrusbeta/hay_say:gpt_so_vits_server	/home/luna/hay_say/gpt_so_vits	runtime-sources/gpt_so_vits
+gpt_so_vits	hydrusbeta/hay_say:gpt_so_vits_server	/home/luna/hay_say/gpt_so_vits_server	runtime-sources/gpt_so_vits_server
+gpt_so_vits	hydrusbeta/hay_say:gpt_so_vits_server	/home/luna/nltk_data/corpora/cmudict	cache/nltk/corpora/cmudict
+gpt_so_vits	hydrusbeta/hay_say:gpt_so_vits_server	/home/luna/nltk_data/taggers/averaged_perceptron_tagger_eng	cache/nltk/taggers/averaged_perceptron_tagger_eng

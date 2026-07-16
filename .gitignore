@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Local planning/agent state
+.planning/
+.agents/
+.codex/
+.ruff_cache/
+
 # C extensions
 *.so
 
@@ -57,6 +63,8 @@ cover/
 
 # Django stuff:
 *.log
+*.pid
+*.sock
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -140,6 +148,22 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Ubuntu-native runtime state and downloaded model assets
+audio_cache/
+models/
+ubuntuserver/runtime-data/
+ubuntuserver/logs/
+ubuntuserver/run/
+ubuntuserver/hay_say/**/raw/*
+ubuntuserver/hay_say/**/results/*
+ubuntuserver/hay_say/**/*.ckpt
+ubuntuserver/hay_say/**/*.index
+ubuntuserver/hay_say/**/*.onnx
+ubuntuserver/hay_say/**/*.pth
+ubuntuserver/hay_say/**/*.pt
+ubuntuserver/hay_say/**/*.safetensors
+ubuntuserver/hay_say/**/wget-log
 .dmypy.json
 dmypy.json
 

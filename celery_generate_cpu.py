@@ -8,9 +8,10 @@ import hay_say_common as hsc
 import main
 import plotly_celery_common as pcc
 from generator import generate_and_prepare_postprocessed_display
+from celery_config import redis_url
 
 # Set up a background callback manager
-REDIS_URL = 'redis+socket:///home/luna/redis.sock?virtual_host=2'
+REDIS_URL = redis_url(2)
 celery_app = Celery(__name__, broker=REDIS_URL, backend=REDIS_URL)
 background_callback_manager = CeleryManager(celery_app)
 
@@ -45,7 +46,9 @@ class CacheSelection(bootsteps.Step):
                     State('crop-silence', 'value'),
                     State('reduce-metallic-sound', 'value'),
                     State('auto-tune-output', 'value'),
-                    State('adjust-output-speed', 'value')] +
+                    State('adjust-output-speed', 'value'),
+                    State('pitch-batch-enabled', 'value'),
+                    State('pitch-batch-values', 'value')] +
                    [State(tab.id, 'hidden') for tab in selected_architectures] +
                    [State(item, 'value') for sublist in   # Add every architecture's inputs as States to the callback
                     [tab.input_ids for tab in selected_architectures]
@@ -58,14 +61,15 @@ class CacheSelection(bootsteps.Step):
         )
         def generate_with_cpu(set_progress, clicks, session_data, user_text, selected_file, semitone_pitch, debug_pitch,
                               reduce_noise, crop_silence, reduce_metallic_noise, auto_tune_output,
-                              output_speed_adjustment, *args):
+                              output_speed_adjustment, pitch_batch_enabled, pitch_batch_values, *args):
             gpu_id = ''
             message = 'generating on CPU...'
             return generate_and_prepare_postprocessed_display(clicks, set_progress, message, cache_implementation,
                                                               gpu_id, session_data, selected_architectures, user_text,
                                                               selected_file, semitone_pitch, debug_pitch, reduce_noise,
                                                               crop_silence, reduce_metallic_noise, auto_tune_output,
-                                                              output_speed_adjustment, args)
+                                                              output_speed_adjustment, pitch_batch_enabled,
+                                                              pitch_batch_values, args)
 
         @callback(
             [Output('hardware-selector', 'options')] +

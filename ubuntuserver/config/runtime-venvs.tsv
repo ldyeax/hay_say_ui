@@ -1,0 +1,8 @@
+# runtime_id<TAB>python_version<TAB>requirements_file
+controllable_talknet	3.8	model_venvs/controllable_talknet/requirements.txt
+so_vits_svc_3	3.12	model_venvs/so_vits_svc_3/requirements.txt
+so_vits_svc_4	3.8	model_venvs/so_vits_svc_4/requirements.txt
+so_vits_svc_5	3.9	model_venvs/so_vits_svc_5/requirements.txt
+rvc	3.9	model_venvs/rvc/requirements.txt
+styletts_2	3.9	model_venvs/styletts_2/requirements.txt
+gpt_so_vits	3.9	model_venvs/gpt_so_vits/requirements.txt

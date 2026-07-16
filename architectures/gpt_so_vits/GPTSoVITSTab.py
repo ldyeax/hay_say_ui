@@ -1,16 +1,24 @@
 import dash_bootstrap_components as dbc
+import json
+import os
 from dash import html, dcc, Input, Output, State, callback, ctx
 from dash.exceptions import PreventUpdate
 from hay_say_common.cache import Stage
 
 import requests
+import hay_say_common as hsc
 import model_licenses
+import runtime_client
 from architectures.AbstractTab import AbstractTab
 
 USE_PRECOMPUTED_EMBEDDING = 'Use Precomputed Embeddings'
 USE_REFERENCE_AUDIO = "Use Reference Audio"
 
 class GPTSoVITSTab(AbstractTab):
+    @property
+    def cache_generated_output(self):
+        return False
+
     @property
     def id(self):
         return 'gpt_so_vits'
@@ -43,7 +51,19 @@ class GPTSoVITSTab(AbstractTab):
         )
 
     def meets_requirements(self, user_text, user_audio, selected_character):
-        return user_text is not None and selected_character is not None
+        return bool(user_text and user_text.strip()) and selected_character is not None
+
+    def meets_all_requirements(self, user_text, user_audio, selected_character, option_values):
+        if not self.meets_requirements(user_text, user_audio, selected_character):
+            return False
+        if len(option_values) != len(self.input_ids):
+            return False
+        reference_option = option_values[12]
+        if reference_option == USE_PRECOMPUTED_EMBEDDING:
+            return option_values[11] is not None
+        if reference_option == USE_REFERENCE_AUDIO:
+            return option_values[1] is not None
+        return False
 
     @property
     def options(self):
@@ -91,13 +111,12 @@ class GPTSoVITSTab(AbstractTab):
                                      id=self.id+'-precomputed-style-dropdowns-2f'))],
                 title="The language of the reference audio. Seeing as how all the character models available so far were voiced in English, you almost certainly should set this parameter to English."
             ),
-            # todo: Additional Reference Audios are maybe a future enhancement
             html.Tr([
                 html.Td(dbc.Collapse(html.Label('Additional Reference Audios', htmlFor=self.input_ids[4]), id=self.id+'-precomputed-style-dropdowns-2g'),
                         className='option-label'),
-                html.Td(dbc.Collapse(dcc.Checklist([''], value=[''], id=self.input_ids[4]), id=self.id+'-precomputed-style-dropdowns-2h'))],
-                title="Additional reference audios. The character's \"tone\" in all the files will be averaged together and be mimicked in the generated output.",
-                hidden=True
+                html.Td(dbc.Collapse(dcc.Dropdown(options=[], value=[], multi=True, id=self.input_ids[4]),
+                                     id=self.id+'-precomputed-style-dropdowns-2h'))],
+                title="Additional reference audios. The character's \"tone\" in all the files will be averaged together and be mimicked in the generated output."
             ),
             html.Tr([
                 html.Td(html.Label('Desired language of generated audio', htmlFor=self.input_ids[5]), className='option-label'),
@@ -139,7 +158,26 @@ class GPTSoVITSTab(AbstractTab):
         ], className='spaced-table')
 
     def available_precomputed_traits(self, character):
-        response = requests.get(f'http://{self.id + "_server"}:{self.port}/available-traits/{character}')
+        character_dir = hsc.character_dir(self.id, character)
+        precomputations = hsc.get_files_with_extension(character_dir, '.safetensors') \
+            if os.path.isdir(character_dir) else []
+        if precomputations:
+            try:
+                with open(precomputations[0], 'rb') as source:
+                    header_size = int.from_bytes(source.read(8), byteorder='little', signed=False)
+                    if header_size <= 0 or header_size > 16 * 1024 * 1024:
+                        raise ValueError(f'invalid safetensors header size: {header_size}')
+                    header = json.loads(source.read(header_size).decode('utf-8'))
+                return sorted({key.split('.', 1)[0] for key in header if key != '__metadata__'})
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                print(f'Unable to read local GPT-SoVITS traits: {exc}', flush=True)
+
+        host, port = runtime_client.service_endpoint(self.id, self.port)
+        try:
+            response = requests.get(f'http://{host}:{port}/available-traits/{character}', timeout=3)
+        except requests.RequestException as exc:
+            print(f'GPT-SoVITS trait lookup is unavailable: {exc}', flush=True)
+            return []
         code = response.status_code
 
         if code != 200:
@@ -315,7 +353,11 @@ class GPTSoVITSTab(AbstractTab):
             'Reference Language': args[3],
             # Note: A checklist option is initially None, but if you toggle it on and then back off, it becomes an empty
             # list, []. If it's None, let's change it to an empty list instead.
-            'Additional Reference Audios': args[4] if args[4] else [],
+            'Additional Reference Audios': [
+                file_hash for file_hash in
+                (self.lookup_filehash(self.cache, filename, session_data) for filename in (args[4] or []))
+                if file_hash is not None
+            ],
             'Target Language': args[5],
             'Cutting Strategy': args[6],
             'Top-K': int(args[7]),

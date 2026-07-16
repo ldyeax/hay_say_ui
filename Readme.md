@@ -1,5 +1,9 @@
 ![image showing the Hay Say UI](documentation%20images/Hay%20Say%20UI.png) 
 
+> **Ubuntu server fork:** This branch runs Hay Say as native user services. Docker is used only once to import the
+> published model sources and pretrained assets; model inference does not run in containers. See
+> [the native Ubuntu installer](ubuntuserver/README.md) for installation, updates, service control, and diagnostics.
+
 ## What is Hay Say?
 
 Hay Say is a user interface for generating pony voices. From a single UI, you can generate voices or perform voice 
@@ -20,12 +24,26 @@ voice generation solutions. Preprocessing and postprocessing options are separat
 that every architecture can benefit from new pre- or post-processing features. With a UI framework already in place, it 
 should be possible to give new architectures a usable UI more quickly by integrating them with Hay Say.
 
-A secondary motivation behind Hay Say is to reduce user frustration with installing software. Falling into Python's 
-"dependency hell" seems to be a common pain point when users try to install voice generation software locally. Hay Say 
-addresses this issue by pre-installing all the AI solutions into their own Docker images. Users simply need to install 
-Docker and pull the pre-built images.
+A secondary motivation behind Hay Say is to reduce user frustration with installing software. Falling into Python's
+"dependency hell" is a common pain point when users install voice generation software locally. The Ubuntu server fork
+extracts the reviewed published images into isolated, pinned Python environments and manages them with systemd. The
+original Docker Compose deployment remains available for other platforms.
 
 ## Installation Instructions
+
+### Native Ubuntu Server Installation
+
+Clone this repository, then run the idempotent installer from any directory:
+
+```shell
+sudo /path/to/hay_say_ui/ubuntuserver/install.sh
+```
+
+The default service account is `luna`. On systems with `/mnt/sanic`, extracted runtime sources and caches are placed
+there automatically. See [ubuntuserver/README.md](ubuntuserver/README.md) for path overrides, selective runtime
+installation, dry runs, updates, and `doctor.sh`.
+
+### Docker Compose Installation
 
 Important: Be aware that Hay Say will need to download at least 49 GB of compressed Docker images, so expect it to take 
 a while to start up the first time you run it. It should come up quickly after that. The exact amount of time required 
@@ -770,4 +788,3 @@ generations, even with a different character selected.
 [1] Test failed with an error. Unable to generate audio.
 
 	
-

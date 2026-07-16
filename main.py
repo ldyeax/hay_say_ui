@@ -9,12 +9,13 @@ import uuid
 
 import dash_bootstrap_components as dbc
 import soundfile
-from dash import Dash, html, dcc, Input, Output, State, ctx, callback, MATCH
+from dash import Dash, html, dcc, Input, Output, State, ctx, callback, MATCH, no_update
 from dash.exceptions import PreventUpdate
 from hay_say_common.cache import Stage
 
 import hay_say_common as hsc
 import plotly_celery_common as pcc
+import runtime_client
 from deletion_scheduler import register_cache_cleanup_callback
 
 # todo: so-vits output is much louder than controllable talknet. Should the output volume be equalized?
@@ -159,6 +160,24 @@ def construct_main_interface(tab_buttons, tabs_contents, enable_session_caches):
                 html.Table([
                     html.Tr(
                         html.Td(
+                            html.Div([
+                                dbc.Switch(
+                                    id='pitch-batch-enabled',
+                                    label='Pitch variants',
+                                    value=False,
+                                ),
+                                dbc.Input(
+                                    id='pitch-batch-values',
+                                    type='text',
+                                    placeholder='-12,-7,0,7,12 or -12:12:2',
+                                    disabled=True,
+                                ),
+                            ], id='pitch-batch-controls', className='pitch-batch-controls', hidden=True),
+                            className='generate-cell',
+                        ),
+                    ),
+                    html.Tr(
+                        html.Td(
                             html.Div('Generate with:'), className='centered'
                         ),
                     ),
@@ -231,6 +250,27 @@ def register_generate_callbacks(cache_type, architectures):
 def register_main_callbacks(enable_session_caches, cache_type, architectures):
     cache = hsc.select_cache_implementation(cache_type)
     available_tabs = pcc.select_architecture_tabs(architectures)
+
+    @callback(
+        [Output('pitch-batch-controls', 'hidden'),
+         Output('pitch-batch-values', 'disabled')],
+        [Input(tab.id, 'hidden') for tab in available_tabs] +
+        [Input('pitch-batch-enabled', 'value')]
+    )
+    def configure_pitch_batch(*hidden_states_and_enabled):
+        hidden_states = hidden_states_and_enabled[:-1]
+        enabled = hidden_states_and_enabled[-1]
+        selected_tab = get_selected_tab_object(hidden_states)
+        unsupported = selected_tab is None or selected_tab.pitch_batch_key is None
+        return unsupported, unsupported or not enabled
+
+    @callback(
+        Output('pitch-batch-enabled', 'value'),
+        [Input(tab.id, 'hidden') for tab in available_tabs],
+    )
+    def reset_pitch_batch_for_unsupported_tab(*hidden_states):
+        selected_tab = get_selected_tab_object(hidden_states)
+        return False if selected_tab is None or selected_tab.pitch_batch_key is None else no_update
 
     @callback(
         Output('session', 'data'),
@@ -319,21 +359,18 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
              Output('file-dropdown', 'value', allow_duplicate=True),
              Output('dropdown-container', 'hidden', allow_duplicate=True),
              Output(gpt_so_vits_tab.input_ids[1], 'options', allow_duplicate=True),
-             Output(gpt_so_vits_tab.input_ids[1], 'value', allow_duplicate=True)],
+             Output(gpt_so_vits_tab.input_ids[1], 'value', allow_duplicate=True),
+             Output(gpt_so_vits_tab.input_ids[4], 'options', allow_duplicate=True),
+             Output(gpt_so_vits_tab.input_ids[4], 'value', allow_duplicate=True)],
             Input('confirm-delete-inputs', 'submit_n_clicks'),
             State('session', 'data'),
             prevent_initial_call=True
         )
         def delete_all_raw_through_output(_, session_data):
-            # We must write to the cache of each stage first, to guarantee the Stage exits before deleting all its contents.
-            # todo: fix the hay_say_common method so we can call delete_all_files_at_stage by itself.
-            cache.write_metadata(Stage.RAW, session_data['id'], dict())
-            cache.write_metadata(Stage.PREPROCESSED, session_data['id'], dict())
-            cache.write_metadata(Stage.OUTPUT, session_data['id'], dict())
             cache.delete_all_files_at_stage(Stage.RAW, session_data['id'])
             cache.delete_all_files_at_stage(Stage.PREPROCESSED, session_data['id'])
             cache.delete_all_files_at_stage(Stage.OUTPUT, session_data['id'])
-            return [], None, True, [], None
+            return [], None, True, [], None, [], []
 
         @callback(
             [Output('file-dropdown', 'options'),
@@ -341,17 +378,22 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
              Output('dropdown-container', 'hidden'),
              Output('file-picker', 'contents'),
              Output(gpt_so_vits_tab.input_ids[1], 'options'),
-             Output(gpt_so_vits_tab.input_ids[1], 'value')],
+             Output(gpt_so_vits_tab.input_ids[1], 'value'),
+             Output(gpt_so_vits_tab.input_ids[4], 'options'),
+             Output(gpt_so_vits_tab.input_ids[4], 'value')],
             # work around for issue #816 (https://github.com/plotly/dash-core-components/issues/816)
             Input('file-picker', 'contents'),
             State('file-picker', 'filename'),
             State('session', 'data'),
-            State(gpt_so_vits_tab.input_ids[1], 'value')
+            State(gpt_so_vits_tab.input_ids[1], 'value'),
+            State(gpt_so_vits_tab.input_ids[4], 'value')
         )
-        def upload_file(file_contents_list, filename_list, session_data, current_gpt_file):
+        def upload_file(file_contents_list, filename_list, session_data, current_gpt_file, current_additional_files):
             if file_contents_list is None:  # initial load of page
                 filenames, currently_selected_file, hidden = update_dropdown(cache, None, session_data)
-                return filenames, currently_selected_file, hidden, None, filenames, currently_selected_file
+                additional = [name for name in (current_additional_files or []) if name in filenames]
+                return (filenames, currently_selected_file, hidden, None, filenames, currently_selected_file,
+                        filenames, additional)
             else:
                 for file_contents, filename in zip(file_contents_list, filename_list):
                     filename = append_index_if_needed(filename, session_data)
@@ -359,7 +401,9 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
                     save_raw_audio_to_cache(filename, raw_array, raw_samplerate, session_data)
                 filenames, currently_selected_file, hidden = update_dropdown(cache, filename_list[0], session_data)
                 selected_gptsovits_file = current_gpt_file if current_gpt_file in filenames else currently_selected_file
-                return filenames, currently_selected_file, hidden, None, filenames, selected_gptsovits_file
+                additional = [name for name in (current_additional_files or []) if name in filenames]
+                return (filenames, currently_selected_file, hidden, None, filenames, selected_gptsovits_file,
+                        filenames, additional)
     else:
         @callback(
             [Output('file-dropdown', 'options', allow_duplicate=True),
@@ -370,11 +414,6 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
             prevent_initial_call=True
         )
         def delete_all_raw_through_output(_, session_data):
-            # We must write to the cache of each stage first, to guarantee the Stage exits before deleting all its contents.
-            # todo: fix the hay_say_common method so we can call delete_all_files_at_stage by itself.
-            cache.write_metadata(Stage.RAW, session_data['id'], dict())
-            cache.write_metadata(Stage.PREPROCESSED, session_data['id'], dict())
-            cache.write_metadata(Stage.OUTPUT, session_data['id'], dict())
             cache.delete_all_files_at_stage(Stage.RAW, session_data['id'])
             cache.delete_all_files_at_stage(Stage.PREPROCESSED, session_data['id'])
             cache.delete_all_files_at_stage(Stage.OUTPUT, session_data['id'])
@@ -458,12 +497,15 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
             write_raw_metadata(hash_raw, filename, session_data)
 
     def write_raw_metadata(hash_80_bits, filename, session_data):
-        raw_metadata = cache.read_metadata(Stage.RAW, session_data['id'])
-        raw_metadata[hash_80_bits] = {
+        entry = {
             'User File': filename,
             'Time of Creation': datetime.datetime.now().strftime(hsc.cache.TIMESTAMP_FORMAT)
         }
-        cache.write_metadata(Stage.RAW, session_data['id'], raw_metadata)
+        cache.update_metadata(
+            Stage.RAW,
+            session_data['id'],
+            lambda metadata: metadata.update({hash_80_bits: entry}),
+        )
 
     @callback(
         [Output('input-playback', 'src'),
@@ -494,20 +536,24 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
         [Input('text-input', 'value'),
          Input('file-dropdown', 'value')] +
         [Input(tab.id, 'hidden') for tab in available_tabs] +
-        [Input(tab.input_ids[0], 'value') for tab in available_tabs]
+        [Input(item, 'value') for tab in available_tabs for item in tab.input_ids]
     )
-    def disable_generate_button(user_text, selected_file, *hidden_states_and_character_selections):
+    def disable_generate_button(user_text, selected_file, *hidden_states_and_options):
         # todo: don't disable the generate button. Instead, highlight the requirements text and whatever the user is
         #  missing in red.
-        hidden_states = hidden_states_and_character_selections[:len(available_tabs)]
-        character_selections = hidden_states_and_character_selections[len(available_tabs):]
+        hidden_states = hidden_states_and_options[:len(available_tabs)]
+        option_values = hidden_states_and_options[len(available_tabs):]
         tab_object = get_selected_tab_object(hidden_states)
         if tab_object is None:
             return True, True
         else:
             index = hidden_states.index(False)
-            selected_character = character_selections[index]
-            hidden = not tab_object.meets_requirements(user_text, selected_file, selected_character)
+            start = sum(len(tab.input_ids) for tab in available_tabs[:index])
+            selected_options = option_values[start:start + len(tab_object.input_ids)]
+            selected_character = selected_options[0]
+            hidden = not tab_object.meets_all_requirements(
+                user_text, selected_file, selected_character, selected_options
+            )
             return hidden, hidden
 
     # todo: disable the preview button if no audio file is selected.
@@ -525,7 +571,15 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
         if selected_file is None:
             raise PreventUpdate
 
-        hash_preprocessed = pcc.preprocess(cache, selected_file, semitone_pitch, debug_pitch, reduce_noise, crop_silence)
+        hash_preprocessed = pcc.preprocess(
+            cache,
+            selected_file,
+            semitone_pitch,
+            debug_pitch,
+            reduce_noise,
+            crop_silence,
+            session_data,
+        )
 
         # return src
         bytes_preprocessed = cache.read_file_bytes(Stage.PREPROCESSED, session_data['id'], hash_preprocessed)
@@ -596,6 +650,8 @@ def parse_arguments(arguments):
     parser = argparse.ArgumentParser(prog='wsgi.py', description='A Unified Interface for Pony Voice Generation.')
     parser.add_argument('--update_model_lists_on_startup', action='store_true', default=False, help='Causes Hay Say to download the latest model lists so that all the latest models appear in the character download menus.')
     parser.add_argument('--enable_model_management', action='store_true', default=False, help='Enables the user to download and delete models.')
+    parser.add_argument('--enable_runtime_admin', action='store_true', default=None,
+                        help='Enables the native model runtime status and lifecycle panel.')
     parser.add_argument('--enable_session_caches', action='store_true', default=False, help='Maintain separate caches for each session. If not enabled, a single cache is used for all sessions.')
     parser.add_argument('--cache_implementation', default='file', choices=hsc.cache_implementation_map.keys(), help='Selects an implementation for the audio cache, e.g. saving them to files or to a database.')
     parser.add_argument('--migrate_models', action='store_true', default=False, help='Automatically move models from the model pack directories and custom model directory to the new models directory when Hay Say starts.')
@@ -634,24 +690,33 @@ def add_model_manager_page(app, available_tabs):
     register_model_manager_callbacks(available_tabs)
 
 
-def add_toolbar(app):
+def add_toolbar(app, enable_model_management, enable_runtime_admin):
     # The import statement is located here, to make sure that the toolbar module is not loaded at all unless this method
     # is called.
     from toolbar import construct_toolbar, register_toolbar_callbacks
-    app.layout.children.append(construct_toolbar())
-    register_toolbar_callbacks()
+    app.layout.children.append(construct_toolbar(enable_model_management, enable_runtime_admin))
+    register_toolbar_callbacks(enable_model_management, enable_runtime_admin)
 
 
-def add_model_management_components_if_needed(cache_type, enable_model_management, architectures, app):
+def add_runtime_admin_page(app):
+    from runtime_admin import construct_runtime_admin, register_runtime_admin_callbacks
+    app.layout.children.append(construct_runtime_admin())
+    register_runtime_admin_callbacks()
+
+
+def add_management_components(cache_type, enable_model_management, enable_runtime_admin, architectures, app):
+    available_tabs = pcc.select_architecture_tabs(architectures)
     if enable_model_management:
-        available_tabs = pcc.select_architecture_tabs(architectures)
-        add_model_management_components(cache_type, architectures, app, available_tabs)
-
-
-def add_model_management_components(cache_type, architectures, app, available_tabs):
-    register_download_callbacks(cache_type, architectures)
-    add_model_manager_page(app, available_tabs)
-    add_toolbar(app)
+        register_download_callbacks(cache_type, architectures)
+        add_model_manager_page(app, available_tabs)
+    else:
+        app.layout.children.append(html.Div(id='model-manager-outer-div', hidden=True))
+    if enable_runtime_admin:
+        add_runtime_admin_page(app)
+    else:
+        app.layout.children.append(html.Div(id='runtime-admin-outer-div', hidden=True))
+    if enable_model_management or enable_runtime_admin:
+        add_toolbar(app, enable_model_management, enable_runtime_admin)
 
 
 def register_cache_cleanup_callback_if_needed(enable_session_caches, cache_type):
@@ -660,10 +725,12 @@ def register_cache_cleanup_callback_if_needed(enable_session_caches, cache_type)
 
 
 def build_app(architectures, update_model_lists_on_startup=False, enable_model_management=False, enable_session_caches=False,
-              cache_type='file', migrate_models=False):
+              cache_type='file', migrate_models=False, enable_runtime_admin=None):
+    if enable_runtime_admin is None:
+        enable_runtime_admin = runtime_client.admin_enabled()
     app = construct_app_layout(enable_model_management, cache_type, architectures, enable_session_caches)
     register_app_callbacks(architectures, enable_model_management, enable_session_caches, cache_type)
-    add_model_management_components_if_needed(cache_type, enable_model_management, architectures, app)
+    add_management_components(cache_type, enable_model_management, enable_runtime_admin, architectures, app)
     register_cache_cleanup_callback_if_needed(enable_session_caches, cache_type)
 
     # Save some of the command-line options to the server object so that the server hook methods can get to them:

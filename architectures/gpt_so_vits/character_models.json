@@ -355,7 +355,7 @@
                 "URL": "https://huggingface.co/hydrusbeta/models_i_trained/resolve/main/gpt_sovits_precomputed-values/fluttershy_precomp.safetensors",
                 "Download With": "HUGGINGFACE_HUB",
                 "Download As": "fluttershy_precomp.safetensors",
-                "Size (bytes)": 993912
+                "Size (bytes)": 1393560
             }
         ],
         "License": "UNSPECIFIED"

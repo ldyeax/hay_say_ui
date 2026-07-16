@@ -1,8 +1,10 @@
 import hashlib
+import io
 import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import librosa
@@ -19,6 +21,15 @@ import utils
 from models import SynthesizerTrn
 
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
+LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SvcFeatures:
+    """HuBERT units and unshifted F0 extracted from one audio segment."""
+
+    units: np.ndarray
+    base_f0: np.ndarray
 
 
 def read_temp(file_name):
@@ -79,6 +90,39 @@ def get_end_file(dir_path, end):
 
 def get_md5(content):
     return hashlib.new("md5", content).hexdigest()
+
+
+def load_audio_for_torch(audio_path):
+    """Load an audio file-like object without relying on torchaudio codecs."""
+
+    source, sample_rate = soundfile.read(audio_path, dtype="float32", always_2d=True)
+    return torch.from_numpy(source.T), sample_rate
+
+
+def audio_to_mono_tensor(source, channels_first=False):
+    """Normalize NumPy or torch audio to a float32 ``[1, samples]`` tensor."""
+
+    if isinstance(source, torch.Tensor):
+        tensor = source.detach().to(dtype=torch.float32, device="cpu")
+        channels_first = True
+    else:
+        array = np.asarray(source, dtype=np.float32)
+        if not np.isfinite(array).all():
+            raise ValueError("Input audio contains NaN or infinite samples")
+        tensor = torch.from_numpy(array)
+
+    if tensor.ndim == 1:
+        tensor = tensor.unsqueeze(0)
+    elif tensor.ndim == 2:
+        if not channels_first:
+            tensor = tensor.transpose(0, 1)
+        tensor = tensor.mean(dim=0, keepdim=True)
+    else:
+        raise ValueError("Input audio must be mono or multi-channel PCM")
+
+    if tensor.shape[-1] == 0:
+        raise ValueError("Input audio is empty")
+    return tensor.contiguous()
 
 
 def resize2d_f0(x, target_len):
@@ -150,7 +194,7 @@ def split_list_by_n(list_collection, n, pre=0):
 
 class Svc(object):
     def __init__(self, net_g_path, config_path, hubert_path="hubert/hubert-soft-0d54a1f4.pt",
-                 onnx=False, device=None):
+                 onnx=False, device=None, hubert=None):
         self.onnx = onnx
         self.net_g_path = net_g_path
         self.hubert_path = hubert_path
@@ -166,9 +210,14 @@ class Svc(object):
         for spk, sid in self.hps_ms.spk.items():
             self.speakers[sid] = spk
         self.spk2id = self.hps_ms.spk
-        # 加载hubert
-        self.hubert_soft = hubert_model.hubert_soft(hubert_path)
-        self.hubert_soft = self.hubert_soft.to(self.dev)
+        self.hubert_soft = hubert
+        self.owns_hubert = hubert is None
+        if self.hubert_soft is None:
+            self.hubert_soft = hubert_model.hubert_soft(hubert_path)
+            self.hubert_soft = self.hubert_soft.to(self.dev)
+        if hasattr(self.hubert_soft, "eval"):
+            self.hubert_soft.eval()
+        self.use_half = "half" in self.net_g_path and self.dev.type == "cuda"
         self.load_model()
 
     def load_model(self):
@@ -188,49 +237,79 @@ class Svc(object):
                 self.hps_ms.train.segment_size // self.hps_ms.data.hop_length,
                 **self.hps_ms.model)
             _ = utils.load_checkpoint(self.net_g_path, self.net_g_ms, None)
-        if "half" in self.net_g_path and torch.cuda.is_available():
+        if self.use_half:
             _ = self.net_g_ms.half().eval().to(self.dev)
         else:
             _ = self.net_g_ms.eval().to(self.dev)
 
     def get_units(self, source, sr):
-
+        del sr
         source = source.unsqueeze(0).to(self.dev)
         with torch.inference_mode():
             start = time.time()
             units = self.hubert_soft.units(source)
-            use_time = time.time() - start
-            print("hubert use time:{}".format(use_time))
+            LOGGER.debug("HuBERT inference took %.3fs", time.time() - start)
             return units
 
-
     def get_unit_pitch(self, in_path, tran):
-        source, sr = torchaudio.load(in_path)
-        source = torchaudio.functional.resample(source, sr, 16000)
-        if len(source.shape) == 2 and source.shape[1] >= 2:
-            source = torch.mean(source, dim=0).unsqueeze(0)
-        soft = self.get_units(source, sr).squeeze(0).cpu().numpy()
-        f0_coarse, f0 = get_f0(source.cpu().numpy()[0], soft.shape[0]*2, tran)
-        return soft, f0
+        source, sample_rate = load_audio_for_torch(in_path)
+        features = self.prepare_features(source, sample_rate, channels_first=True)
+        return features.units, self.shift_f0(features.base_f0, tran)
 
-    def infer(self, speaker_id, tran, raw_path):
-        if type(speaker_id) == str:
+    def prepare_features(self, source, sample_rate, channels_first=False):
+        """Extract source features once so a pitch batch can reuse HuBERT work."""
+
+        source = audio_to_mono_tensor(source, channels_first=channels_first)
+        if int(sample_rate) <= 0:
+            raise ValueError("Sample rate must be a positive integer")
+        if int(sample_rate) != 16000:
+            source = torchaudio.functional.resample(source, int(sample_rate), 16000)
+        units = self.get_units(source, 16000).squeeze(0).cpu().numpy()
+        _, base_f0 = get_f0(source.cpu().numpy()[0], units.shape[0] * 2, 0)
+        return SvcFeatures(units=units, base_f0=np.asarray(base_f0, dtype=np.float32))
+
+    @staticmethod
+    def shift_f0(base_f0, semitones):
+        return np.asarray(base_f0, dtype=np.float32) * pow(2.0, float(semitones) / 12.0)
+
+    def infer_from_features(self, speaker_id, tran, features):
+        """Synthesize one pitch from previously extracted source features."""
+
+        if isinstance(speaker_id, str):
+            if speaker_id not in self.spk2id:
+                raise ValueError("Unknown speaker: {}".format(speaker_id))
             speaker_id = self.spk2id[speaker_id]
         sid = torch.LongTensor([int(speaker_id)]).to(self.dev).unsqueeze(0)
-        soft, pitch = self.get_unit_pitch(raw_path, tran)
+        pitch = self.shift_f0(features.base_f0, tran).copy()
         f0 = torch.FloatTensor(clean_pitch(pitch)).unsqueeze(0).to(self.dev)
-        if "half" in self.net_g_path and torch.cuda.is_available():
-            stn_tst = torch.HalfTensor(soft)
-        else:
-            stn_tst = torch.FloatTensor(soft)
-        with torch.no_grad():
+        tensor_type = torch.HalfTensor if self.use_half else torch.FloatTensor
+        stn_tst = tensor_type(features.units)
+        with torch.inference_mode():
             x_tst = stn_tst.unsqueeze(0).to(self.dev)
-            start = time.time()
             x_tst = torch.repeat_interleave(x_tst, repeats=2, dim=1).transpose(1, 2)
-            audio = self.net_g_ms.infer(x_tst, f0=f0, g=sid)[0,0].data.float()
-            use_time = time.time() - start
-            print("vits use time:{}".format(use_time))
+            start = time.time()
+            audio = self.net_g_ms.infer(x_tst, f0=f0, g=sid)[0, 0].detach().float()
+            LOGGER.debug("VITS inference took %.3fs", time.time() - start)
         return audio, audio.shape[-1]
+
+    def infer(self, speaker_id, tran, raw_path):
+        source, sample_rate = load_audio_for_torch(raw_path)
+        features = self.prepare_features(source, sample_rate, channels_first=True)
+        return self.infer_from_features(speaker_id, tran, features)
+
+    def close(self):
+        """Release model tensors without moving an injected shared HuBERT."""
+
+        if self.net_g_ms is not None:
+            try:
+                self.net_g_ms.to("cpu")
+            finally:
+                self.net_g_ms = None
+        if self.owns_hubert and self.hubert_soft is not None:
+            try:
+                self.hubert_soft.to("cpu")
+            finally:
+                self.hubert_soft = None
 
 
 # class SvcONNXInferModel(object):
@@ -331,4 +410,3 @@ class RealTimeVC:
             self.last_chunk = audio[-self.pre_len:]
             self.last_o = audio
             return ret[self.chunk_len:2 * self.chunk_len]
-

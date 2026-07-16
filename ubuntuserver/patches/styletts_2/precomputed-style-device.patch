@@ -1,0 +1,11 @@
+--- a/command_line_interface.py
++++ b/command_line_interface.py
+@@ -203,7 +203,7 @@
+         if style_array is None:
+             raise Exception('No style array found for model ' + model_name + ', character ' + character + ' and trait '
+                             + trait)
+-        return torch.FloatTensor([style_array])
++        return torch.FloatTensor([style_array]).to(DEVICE)
+ 
+ 
+ # Build model

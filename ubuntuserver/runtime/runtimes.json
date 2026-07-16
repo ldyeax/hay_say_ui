@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "manager": {
+    "state_dir": "${HAY_SAY_RUNTIME_STATE_DIR:-/home/luna/.local/state/hay-say/runtimes}",
+    "log_dir": "${HAY_SAY_RUNTIME_LOG_DIR:-/home/luna/.local/state/hay-say/logs}",
+    "api_host": "127.0.0.1",
+    "api_port": 6588,
+    "request_timeout_seconds": 5.0,
+    "start_grace_seconds": 30.0,
+    "stop_timeout_seconds": 15.0,
+    "collect_gpu_memory": true
+  },
+  "runtimes": [
+    {
+      "id": "controllable_talknet",
+      "label": "Controllable TalkNet",
+      "port": 6574,
+      "command": [
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/.venvs/controllable_talknet/bin/python",
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/controllable_talknet_server/main.py",
+        "--cache_implementation",
+        "file"
+      ],
+      "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/controllable_talknet",
+      "env": {"PYTHONUNBUFFERED": "1"},
+      "device": "auto",
+      "runtime_endpoint": "/runtime",
+      "health_endpoint": "/gpu-info"
+    },
+    {
+      "id": "so_vits_svc_3",
+      "label": "so-vits-svc 3.0",
+      "port": 6575,
+      "command": [
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/.venvs/so_vits_svc_3/bin/python",
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/so_vits_svc_3_server/main.py",
+        "--cache_implementation",
+        "file"
+      ],
+      "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/so_vits_svc_3",
+      "env": {"PYTHONUNBUFFERED": "1"},
+      "device": "auto",
+      "runtime_endpoint": "/runtime",
+      "health_endpoint": "/gpu-info"
+    },
+    {
+      "id": "so_vits_svc_4",
+      "label": "so-vits-svc 4.0/4.1",
+      "port": 6576,
+      "command": [
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/.venvs/so_vits_svc_4/bin/python",
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/so_vits_svc_4_server/main.py",
+        "--cache_implementation",
+        "file"
+      ],
+      "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/so_vits_svc_4",
+      "env": {"PYTHONUNBUFFERED": "1"},
+      "device": "auto",
+      "runtime_endpoint": "/runtime",
+      "health_endpoint": "/gpu-info"
+    },
+    {
+      "id": "so_vits_svc_5",
+      "label": "so-vits-svc 5.0",
+      "port": 6577,
+      "command": [
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/.venvs/so_vits_svc_5/bin/python",
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/so_vits_svc_5_server/main.py",
+        "--cache_implementation",
+        "file"
+      ],
+      "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/so_vits_svc_5_v2",
+      "env": {"PYTHONUNBUFFERED": "1"},
+      "device": "auto",
+      "runtime_endpoint": "/runtime",
+      "health_endpoint": "/gpu-info"
+    },
+    {
+      "id": "rvc",
+      "label": "RVC",
+      "port": 6578,
+      "command": [
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/.venvs/rvc/bin/python",
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/rvc_server/main.py",
+        "--cache_implementation",
+        "file"
+      ],
+      "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/rvc",
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "weight_root": "${HAY_SAY_HOME:-/home/luna/hay_say}/rvc/assets/weights",
+        "rmvpe_root": "${HAY_SAY_HOME:-/home/luna/hay_say}/rvc/assets/rmvpe"
+      },
+      "device": "auto",
+      "runtime_endpoint": "/runtime",
+      "health_endpoint": "/gpu-info"
+    },
+    {
+      "id": "styletts_2",
+      "label": "StyleTTS2",
+      "port": 6580,
+      "command": [
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/.venvs/styletts_2/bin/python",
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/styletts_2_server/main.py",
+        "--cache_implementation",
+        "file"
+      ],
+      "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/styletts_2",
+      "env": {"PYTHONUNBUFFERED": "1"},
+      "device": "auto",
+      "runtime_endpoint": "/runtime",
+      "health_endpoint": "/gpu-info"
+    },
+    {
+      "id": "gpt_so_vits",
+      "label": "GPT-SoVITS",
+      "port": 6581,
+      "command": [
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/.venvs/gpt_so_vits/bin/python",
+        "${HAY_SAY_HOME:-/home/luna/hay_say}/gpt_so_vits_server/main.py",
+        "--cache_implementation",
+        "file"
+      ],
+      "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/gpt_so_vits",
+      "env": {"PYTHONUNBUFFERED": "1"},
+      "device": "auto",
+      "runtime_endpoint": "/runtime",
+      "health_endpoint": "/gpu-info"
+    }
+  ]
+}

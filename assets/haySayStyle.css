@@ -21,9 +21,9 @@ body {
 }
 
 .outer-div{
-    width: 960px;
-    margin: 0 auto;
-    margin-top: 40px; /* Makes room for Toolbar */
+    width: calc(100% - 32px);
+    max-width: 1100px;
+    margin: 56px auto 0;
 }
 
 .model-list-div{
@@ -86,6 +86,12 @@ option {
     top: 0px;
     width: 100%;
     background-color: #222222;
+    min-height: 42px;
+    padding: 4px 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    z-index: 1000;
 }
 
 #message{
@@ -213,6 +219,120 @@ option {
 
 button{
     background-color: rgba(0,0,0,0.25);
+}
+
+.pitch-batch-controls {
+    display: grid;
+    grid-template-columns: auto minmax(260px, 420px);
+    gap: 12px;
+    align-items: center;
+    margin: 16px auto;
+}
+
+.runtime-admin h1 {
+    font-family: inherit;
+    font-size: 32px;
+    text-align: left;
+    margin-bottom: 18px;
+}
+
+.runtime-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.runtime-table {
+    width: 100%;
+    min-width: 1000px;
+    border-collapse: collapse;
+    background: #272a2e;
+}
+
+.runtime-table th,
+.runtime-table td {
+    border-bottom: 1px solid #4a4f55;
+    padding: 10px;
+    text-align: left;
+    vertical-align: middle;
+}
+
+.runtime-table th {
+    color: #c8d0d8;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.runtime-table td:first-child strong,
+.runtime-table td:first-child small {
+    display: block;
+    white-space: nowrap;
+}
+
+.runtime-table td:first-child small {
+    color: #aeb7c0;
+}
+
+.runtime-status {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.runtime-status-warm-idle,
+.runtime-status-busy {
+    color: #63d294;
+}
+
+.runtime-status-ready-cold,
+.runtime-status-starting {
+    color: #f3c969;
+}
+
+.runtime-status-error {
+    color: #ff7b72;
+}
+
+.runtime-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 68px);
+    gap: 6px;
+}
+
+.runtime-actions button {
+    width: 68px;
+    min-height: 34px;
+}
+
+#runtime-admin-message {
+    min-height: 28px;
+    color: #c8d0d8;
+}
+
+.runtime-admin-error {
+    border-left: 3px solid #ff7b72;
+    padding: 12px;
+}
+
+@media (max-width: 700px) {
+    H1 {
+        font-size: 44pt;
+    }
+
+    .subtitle {
+        font-size: 20pt;
+    }
+
+    .outer-div {
+        width: calc(100% - 20px);
+    }
+
+    .architecture-info {
+        display: block;
+        width: 100%;
+    }
+
+    .pitch-batch-controls {
+        grid-template-columns: 1fr;
+    }
 }
 
 button:disabled{

@@ -1,0 +1,15 @@
+[Unit]
+Description=Hay Say model runtime manager
+PartOf=hay-say.target
+Requires=hay-say-redis.service
+After=hay-say-redis.service
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/hay-say/environment
+ExecStart=/usr/bin/env %h/.local/lib/hay-say/bin/run-service runtime-manager
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077

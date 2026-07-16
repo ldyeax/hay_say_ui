@@ -1,0 +1,14 @@
+[Unit]
+Description=Hay Say web UI
+PartOf=hay-say.target
+Requires=hay-say-redis.service hay-say-runtime-manager.service
+After=hay-say-redis.service hay-say-runtime-manager.service
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/hay-say/environment
+ExecStart=/usr/bin/env %h/.local/lib/hay-say/bin/run-service ui
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077

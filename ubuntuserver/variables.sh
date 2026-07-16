@@ -1,12 +1,11 @@
-export LIMITED_USER=luna
-export HOME_DIR="/home/$LIMITED_USER"
-export HOSTALIASES="$HOME_DIR/hosts"
-export REDIS_BIND="127.0.0.1"
-export REDIS_PORT="7379"
-export REDIS_PID="$HOME_DIR/redis.pid"
-export REDIS_LOG="$HOME_DIR/redis.log"
-export REDIS_SOCK="$HOME_DIR/redis.sock"
-export HAY_SAY_UI="$HOME_DIR/hay_say/hay_say_ui"
-export SERVER_DIR="$HAY_SAY_UI/ubuntuserver"
-export MODELS_VENVS_CONFIG_DIR="$SERVER_DIR/model_venvs"
-export HAY_SAY_SRC="$SERVER_DIR/hay_say"
+#!/usr/bin/env bash
+
+HAY_SAY_ENV_FILE="${HAY_SAY_ENV_FILE:-$HOME/.config/hay-say/environment}"
+if [[ -r "$HAY_SAY_ENV_FILE" ]]; then
+	# shellcheck source=/dev/null
+	source "$HAY_SAY_ENV_FILE"
+else
+	export HAY_SAY_INSTALL_ROOT="${HAY_SAY_INSTALL_ROOT:-$HOME/hay_say}"
+	export HAY_SAY_HOME="${HAY_SAY_HOME:-$HAY_SAY_INSTALL_ROOT}"
+	export HAY_SAY_UI="${HAY_SAY_UI:-$HAY_SAY_HOME/hay_say_ui}"
+fi

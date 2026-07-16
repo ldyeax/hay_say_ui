@@ -13,6 +13,8 @@ from dash.exceptions import PreventUpdate
 
 import download.Downloader as Downloader
 import util
+import runtime_client
+from gpu_selection import configured_gpu_available
 
 SHOW_CHARACTER_DOWNLOAD_MENU = '▷ Show Character Download Menu'
 HIDE_CHARACTER_DOWNLOAD_MENU = '▽ Hide Character Download Menu'
@@ -79,6 +81,10 @@ class AbstractTab(ABC):
         # Return True or False, depending on whether the supplied inputs meet the requirements
         return False
 
+    def meets_all_requirements(self, user_text, user_audio, selected_character, option_values):
+        """Validate global inputs plus architecture-specific option values."""
+        return self.meets_requirements(user_text, user_audio, selected_character)
+
     @property
     @abstractmethod
     def options(self):
@@ -110,6 +116,24 @@ class AbstractTab(ABC):
         # A list of all the element IDs whose values need to be sent when the user clicks the "Generate!" button.
         return [self.id + '-character',
                 self.id + '-best-pone']
+
+    @property
+    def pitch_batch_key(self):
+        """Name of the integer option varied during pitch batches, if supported."""
+        return None
+
+    @property
+    def pitch_batch_bounds(self):
+        return -36, 36
+
+    @property
+    def supports_native_pitch_batch(self):
+        return False
+
+    @property
+    def cache_generated_output(self):
+        """Whether identical inputs are expected to produce identical model audio."""
+        return True
 
     @abstractmethod
     def construct_input_dict(self, session_data, *args):
@@ -150,8 +174,15 @@ class AbstractTab(ABC):
         #  celery can do). A third option would be to refactor GPU management so that each celery worker is not just
         #  assigned a single GPU at the start but can use any GPU and places a "lock" on the one it wants to use. Then
         #  it just makes sure to select from among the GPUs listed in supported_gpus.
-        response = requests.get(f'http://{self.id + "_server"}:{self.port}/gpu-info')
-        code = response.status_code
+        host, port = runtime_client.service_endpoint(self.id, self.port)
+        try:
+            response = requests.get(f'http://{host}:{port}/gpu-info', timeout=1.5)
+            code = response.status_code
+        except requests.RequestException as exc:
+            if runtime_client.manager_enabled() and configured_gpu_available():
+                return True
+            print(f'{self.label} is not running ({exc}). GPU generation is unavailable for now.', flush=True)
+            return False
 
         if code != 200:
             # Something probably went wrong, so log a message and assume that GPU is not available.
@@ -335,4 +366,3 @@ class AbstractTab(ABC):
             if os.path.exists(target_path):
                 os.remove(target_path)  # delete the original file
             shutil.move(source_path, target_path)  # replace the original file
-

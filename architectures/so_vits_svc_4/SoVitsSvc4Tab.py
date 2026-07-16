@@ -204,6 +204,10 @@ class SoVitsSvc4Tab(AbstractTab):
                 self.id+'-reduce-noise'
                 ]
 
+    @property
+    def pitch_batch_key(self):
+        return 'Pitch Shift'
+
     def construct_input_dict(self, session_data, *args):
         return {
             'Architecture': self.id,

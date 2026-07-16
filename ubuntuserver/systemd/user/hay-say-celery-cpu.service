@@ -1,0 +1,14 @@
+[Unit]
+Description=Hay Say CPU generation worker
+PartOf=hay-say.target
+Requires=hay-say-redis.service
+After=hay-say-redis.service
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/hay-say/environment
+ExecStart=/usr/bin/env %h/.local/lib/hay-say/bin/run-service celery-cpu
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+UMask=0077
