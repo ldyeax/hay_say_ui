@@ -1,9 +1,8 @@
-"""Deterministic CUDA assignment for GPU generation workers."""
+"""CUDA discovery and deterministic assignment for generation workers."""
 
 import os
 import shutil
 import subprocess
-from functools import lru_cache
 
 
 def configured_gpu_ids(value=None):
@@ -27,9 +26,8 @@ def gpu_id_for_worker(process_index, value=None):
     return identifiers[slot % len(identifiers)]
 
 
-@lru_cache(maxsize=1)
 def detected_gpu_ids():
-    """Return host GPU indices without importing a model runtime's Torch build."""
+    """Return live host GPU indices without importing a model runtime's Torch build."""
     executable = shutil.which("nvidia-smi")
     if executable is None:
         return ()
@@ -44,6 +42,35 @@ def detected_gpu_ids():
         return tuple(int(line.strip()) for line in result.stdout.splitlines() if line.strip())
     except (OSError, subprocess.SubprocessError, ValueError):
         return ()
+
+
+def detected_gpu_status():
+    """Return live free-memory and utilization data keyed by physical GPU id."""
+    executable = shutil.which("nvidia-smi")
+    if executable is None:
+        return {}
+    try:
+        result = subprocess.run(
+            [
+                executable,
+                "--query-gpu=index,memory.free,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        statuses = {}
+        for line in result.stdout.splitlines():
+            identifier, free_memory, utilization = (item.strip() for item in line.split(","))
+            statuses[int(identifier)] = {
+                "free_memory_mib": int(free_memory),
+                "utilization_percent": int(utilization),
+            }
+        return statuses
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError):
+        return {}
 
 
 def configured_gpu_available(value=None):

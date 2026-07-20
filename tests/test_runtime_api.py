@@ -31,6 +31,10 @@ class FakeSupervisor:
         self.calls.append(("stop", runtime_id))
         return self._status(runtime_id, "stopped")
 
+    def stop_all(self):
+        self.calls.append(("stop-all", None))
+        return [self._status("rvc", "stopped")]
+
     def restart(self, runtime_id):
         self.calls.append(("restart", runtime_id))
         return self._status(runtime_id, "starting")
@@ -60,8 +64,12 @@ class RuntimeApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/runtimes/rvc/stop").status_code, 200)
         self.assertEqual(self.client.post("/runtimes/rvc/restart").status_code, 202)
         self.assertEqual(
+            self.client.post("/runtimes/stop-all").get_json(),
+            {"runtimes": [{"id": "rvc", "status": "stopped"}]},
+        )
+        self.assertEqual(
             self.supervisor.calls,
-            [("start", "rvc"), ("stop", "rvc"), ("restart", "rvc")],
+            [("start", "rvc"), ("stop", "rvc"), ("restart", "rvc"), ("stop-all", None)],
         )
         missing = self.client.get("/runtimes/missing")
         self.assertEqual(missing.status_code, 404)

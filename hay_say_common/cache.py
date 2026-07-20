@@ -157,6 +157,11 @@ class FileImpl:
         return os.path.join(cls.map_folder(stage, session_id), filename_sans_extension + CACHE_EXTENSION)
 
     @classmethod
+    def audio_path(cls, stage, session_id, filename_sans_extension):
+        """Return the filesystem path for a cached audio file."""
+        return cls._audio_path(stage, session_id, filename_sans_extension)
+
+    @classmethod
     def read_audio_from_cache(cls, stage, session_id, filename_sans_extension):
         with cls._lock(stage, session_id, exclusive=False):
             return read_audio(cls._audio_path(stage, session_id, filename_sans_extension))

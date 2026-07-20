@@ -22,7 +22,17 @@
         "file"
       ],
       "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/controllable_talknet",
-      "env": {"PYTHONUNBUFFERED": "1"},
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "HAY_SAY_MODEL_IDLE_TTL_SECONDS": "${HAY_SAY_MODEL_IDLE_TTL_SECONDS:-1800}",
+        "HAY_SAY_TALKNET_CPU_BF16_AUTOCAST": "${HAY_SAY_TALKNET_CPU_BF16_AUTOCAST:-0}",
+        "HAY_SAY_TALKNET_CPU_WORKERS": "${HAY_SAY_TALKNET_CPU_WORKERS:-8}",
+        "HAY_SAY_TALKNET_GPU_WORKERS": "${HAY_SAY_TALKNET_GPU_WORKERS:-1}",
+        "OMP_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "MKL_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "OPENBLAS_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "NUMEXPR_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}"
+      },
       "device": "auto",
       "runtime_endpoint": "/runtime",
       "health_endpoint": "/gpu-info"
@@ -38,7 +48,16 @@
         "file"
       ],
       "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/so_vits_svc_3",
-      "env": {"PYTHONUNBUFFERED": "1"},
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "HAY_SAY_MODEL_IDLE_TTL_SECONDS": "${HAY_SAY_MODEL_IDLE_TTL_SECONDS:-1800}",
+        "HAY_SAY_SVC3_CPU_BF16_AUTOCAST": "${HAY_SAY_SVC3_CPU_BF16_AUTOCAST:-0}",
+        "HAY_SAY_SVC3_CPU_THREADS": "${HAY_SAY_SVC3_CPU_THREADS:-4}",
+        "OMP_NUM_THREADS": "${HAY_SAY_SVC3_CPU_THREADS:-4}",
+        "MKL_NUM_THREADS": "${HAY_SAY_SVC3_CPU_THREADS:-4}",
+        "OPENBLAS_NUM_THREADS": "${HAY_SAY_SVC3_CPU_THREADS:-4}",
+        "NUMEXPR_NUM_THREADS": "${HAY_SAY_SVC3_CPU_THREADS:-4}"
+      },
       "device": "auto",
       "runtime_endpoint": "/runtime",
       "health_endpoint": "/gpu-info"
@@ -54,7 +73,16 @@
         "file"
       ],
       "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/so_vits_svc_4",
-      "env": {"PYTHONUNBUFFERED": "1"},
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "HAY_SAY_MODEL_IDLE_TTL_SECONDS": "${HAY_SAY_MODEL_IDLE_TTL_SECONDS:-1800}",
+        "HAY_SAY_SVC4_CPU_BF16_AUTOCAST": "${HAY_SAY_SVC4_CPU_BF16_AUTOCAST:-1}",
+        "HAY_SAY_SVC4_CPU_THREADS_PER_WORKER": "${HAY_SAY_SVC4_CPU_THREADS_PER_WORKER:-1}",
+        "OMP_NUM_THREADS": "${HAY_SAY_SVC4_CPU_THREADS_PER_WORKER:-1}",
+        "MKL_NUM_THREADS": "${HAY_SAY_SVC4_CPU_THREADS_PER_WORKER:-1}",
+        "OPENBLAS_NUM_THREADS": "${HAY_SAY_SVC4_CPU_THREADS_PER_WORKER:-1}",
+        "NUMEXPR_NUM_THREADS": "${HAY_SAY_SVC4_CPU_THREADS_PER_WORKER:-1}"
+      },
       "device": "auto",
       "runtime_endpoint": "/runtime",
       "health_endpoint": "/gpu-info"
@@ -70,7 +98,19 @@
         "file"
       ],
       "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/so_vits_svc_5_v2",
-      "env": {"PYTHONUNBUFFERED": "1"},
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "HAY_SAY_MODEL_IDLE_TTL_SECONDS": "${HAY_SAY_MODEL_IDLE_TTL_SECONDS:-1800}",
+        "HAY_SAY_SVC5_CPU_BF16_AUTOCAST": "${HAY_SAY_SVC5_CPU_BF16_AUTOCAST:-0}",
+        "HAY_SAY_SVC5_CPU_WORKERS": "${HAY_SAY_SVC5_CPU_WORKERS:-1}",
+        "HAY_SAY_SVC5_CPU_THREADS_PER_WORKER": "${HAY_SAY_SVC5_CPU_THREADS_PER_WORKER:-4}",
+        "HAY_SAY_SVC5_GPU_WORKERS": "${HAY_SAY_SVC5_GPU_WORKERS:-1}",
+        "HAY_SAY_SVC5_STARTUP_CONCURRENCY": "${HAY_SAY_SVC5_STARTUP_CONCURRENCY:-1}",
+        "OMP_NUM_THREADS": "${HAY_SAY_SVC5_CPU_THREADS_PER_WORKER:-4}",
+        "MKL_NUM_THREADS": "${HAY_SAY_SVC5_CPU_THREADS_PER_WORKER:-4}",
+        "OPENBLAS_NUM_THREADS": "${HAY_SAY_SVC5_CPU_THREADS_PER_WORKER:-4}",
+        "NUMEXPR_NUM_THREADS": "${HAY_SAY_SVC5_CPU_THREADS_PER_WORKER:-4}"
+      },
       "device": "auto",
       "runtime_endpoint": "/runtime",
       "health_endpoint": "/gpu-info"
@@ -88,6 +128,14 @@
       "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/rvc",
       "env": {
         "PYTHONUNBUFFERED": "1",
+        "HAY_SAY_MODEL_IDLE_TTL_SECONDS": "${HAY_SAY_MODEL_IDLE_TTL_SECONDS:-1800}",
+        "HAY_SAY_RVC_CPU_BF16_AUTOCAST": "${HAY_SAY_RVC_CPU_BF16_AUTOCAST:-0}",
+        "HAY_SAY_RVC_CPU_WORKERS": "${HAY_SAY_RVC_CPU_WORKERS:-12}",
+        "HAY_SAY_RVC_GPU_WORKERS": "${HAY_SAY_RVC_GPU_WORKERS:-1}",
+        "OMP_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "MKL_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "OPENBLAS_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "NUMEXPR_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
         "weight_root": "${HAY_SAY_HOME:-/home/luna/hay_say}/rvc/assets/weights",
         "rmvpe_root": "${HAY_SAY_HOME:-/home/luna/hay_say}/rvc/assets/rmvpe"
       },
@@ -106,7 +154,17 @@
         "file"
       ],
       "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/styletts_2",
-      "env": {"PYTHONUNBUFFERED": "1"},
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "HAY_SAY_MODEL_IDLE_TTL_SECONDS": "${HAY_SAY_MODEL_IDLE_TTL_SECONDS:-1800}",
+        "HAY_SAY_STYLETTS_CPU_BF16_AUTOCAST": "${HAY_SAY_STYLETTS_CPU_BF16_AUTOCAST:-1}",
+        "HAY_SAY_STYLETTS_CPU_WORKERS": "${HAY_SAY_STYLETTS_CPU_WORKERS:-8}",
+        "HAY_SAY_STYLETTS_GPU_WORKERS": "${HAY_SAY_STYLETTS_GPU_WORKERS:-1}",
+        "OMP_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "MKL_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "OPENBLAS_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "NUMEXPR_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}"
+      },
       "device": "auto",
       "runtime_endpoint": "/runtime",
       "health_endpoint": "/gpu-info"
@@ -122,7 +180,17 @@
         "file"
       ],
       "cwd": "${HAY_SAY_HOME:-/home/luna/hay_say}/gpt_so_vits",
-      "env": {"PYTHONUNBUFFERED": "1"},
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "HAY_SAY_MODEL_IDLE_TTL_SECONDS": "${HAY_SAY_MODEL_IDLE_TTL_SECONDS:-1800}",
+        "HAY_SAY_GPT_SOVITS_CPU_BF16_AUTOCAST": "${HAY_SAY_GPT_SOVITS_CPU_BF16_AUTOCAST:-0}",
+        "HAY_SAY_GPT_SOVITS_CPU_WORKERS": "${HAY_SAY_GPT_SOVITS_CPU_WORKERS:-8}",
+        "HAY_SAY_GPT_SOVITS_GPU_WORKERS": "${HAY_SAY_GPT_SOVITS_GPU_WORKERS:-1}",
+        "OMP_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "MKL_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "OPENBLAS_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}",
+        "NUMEXPR_NUM_THREADS": "${HAY_SAY_MODEL_CPU_THREADS:-4}"
+      },
       "device": "auto",
       "runtime_endpoint": "/runtime",
       "health_endpoint": "/gpu-info"

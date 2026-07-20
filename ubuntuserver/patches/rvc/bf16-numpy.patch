@@ -1,0 +1,48 @@
+--- a/infer/modules/vc/pipeline.py
++++ b/infer/modules/vc/pipeline.py
+@@ -58,7 +58,7 @@
+     data2 *= (
+         torch.pow(rms1, torch.tensor(1 - rate))
+         * torch.pow(rms2, torch.tensor(rate - 1))
+-    ).numpy()
++    ).float().cpu().numpy()
+     return data2
+ 
+ 
+@@ -138,7 +138,7 @@
+             pd = torchcrepe.filter.median(pd, 3)
+             f0 = torchcrepe.filter.mean(f0, 3)
+             f0[pd < 0.1] = 0
+-            f0 = f0[0].cpu().numpy()
++            f0 = f0[0].float().cpu().numpy()
+         elif f0_method == "rmvpe":
+             if not hasattr(self, "model_rmvpe"):
+                 from infer.lib.rmvpe import RMVPE
+@@ -225,7 +225,7 @@
+             and not isinstance(big_npy, type(None))
+             and index_rate != 0
+         ):
+-            npy = feats[0].cpu().numpy()
++            npy = feats[0].float().cpu().numpy()
+             if self.is_half:
+                 npy = npy.astype("float32")
+ 
+--- a/infer/lib/rmvpe.py
++++ b/infer/lib/rmvpe.py
+@@ -577,6 +577,6 @@
+                 hidden = self.model.run(
+                     [onnx_outputs_names],
+-                    input_feed={onnx_input_name: mel.cpu().numpy()},
++                    input_feed={onnx_input_name: mel.float().cpu().numpy()},
+                 )[0]
+             else:
+                 mel = mel.half() if self.is_half else mel.float()
+@@ -605,7 +605,7 @@
+         t2 = ttime()
+         # print(234234,hidden.device.type)
+         if "privateuseone" not in str(self.device):
+-            hidden = hidden.squeeze(0).cpu().numpy()
++            hidden = hidden.squeeze(0).float().cpu().numpy()
+         else:
+             hidden = hidden[0]
+         if self.is_half == True:

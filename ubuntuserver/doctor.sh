@@ -141,11 +141,80 @@ for runtime_id in "${runtime_ids[@]}"; do
 	fi
 done
 
-if [[ -f "$HAY_SAY_HOME/so_vits_svc_3/inference/runtime.py" && \
+if [[ -s "$HAY_SAY_HOME/controllable_talknet/controllable_talknet_cli.py" && \
+	-s "$HAY_SAY_HOME/controllable_talknet/models/vqgan32_universal_57000.ckpt" && \
+	-s "$HAY_SAY_HOME/controllable_talknet/hay_say_worker.py" ]]; then
+	pass 'Controllable TalkNet base source and persistent worker'
+else
+	fail 'Controllable TalkNet base source or persistent worker is incomplete'
+fi
+
+if [[ -s "$HAY_SAY_HOME/gpt_so_vits/GPT_SoVITS/inference_cli.py" && \
+	-s "$HAY_SAY_HOME/gpt_so_vits/GPT_SoVITS/inference_webui.py" && \
+	-s "$HAY_SAY_HOME/gpt_so_vits/GPT_SoVITS/pretrained_models/chinese-hubert-base/pytorch_model.bin" && \
+	-s "$HAY_SAY_HOME/gpt_so_vits/hay_say_worker.py" ]]; then
+	pass 'GPT-SoVITS base source and persistent worker'
+else
+	fail 'GPT-SoVITS base source or persistent worker is incomplete'
+fi
+
+if [[ -s "$HAY_SAY_HOME/rvc/infer/modules/vc/modules.py" && \
+	-s "$HAY_SAY_HOME/rvc/assets/hubert/hubert_base.pt" && \
+	-s "$HAY_SAY_HOME/rvc/assets/rmvpe/rmvpe.pt" && \
+	-s "$HAY_SAY_HOME/rvc/hay_say_worker.py" ]]; then
+	pass 'RVC base source and persistent worker'
+else
+	fail 'RVC base source or persistent worker is incomplete'
+fi
+
+if [[ -s "$HAY_SAY_HOME/styletts_2/models.py" && \
+	-s "$HAY_SAY_HOME/styletts_2/Utils/ASR/epoch_00080.pth" && \
+	-s "$HAY_SAY_HOME/styletts_2/Utils/JDC/bst.t7" && \
+	-s "$HAY_SAY_HOME/styletts_2/Utils/PLBERT/step_1000000.t7" && \
+	-s "$HAY_SAY_HOME/styletts_2/hay_say_runtime.py" && \
+	-s "$HAY_SAY_HOME/styletts_2/hay_say_worker.py" ]]; then
+	pass 'StyleTTS2 base source and persistent worker'
+else
+	fail 'StyleTTS2 base source or persistent worker is incomplete'
+fi
+
+if [[ -s "$HAY_SAY_HOME/so_vits_svc_3/inference/runtime.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_3/inference/infer_tool.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_3/hubert/hubert-soft-0d54a1f4.pt" && \
 	! -e "$HAY_SAY_HOME/so_vits_svc_3/inference_main_template.py" ]]; then
 	pass 'SVC3 uses the native long-lived runtime'
 else
-	fail 'SVC3 native overlay is incomplete or the obsolete template remains'
+	fail 'SVC3 base source/native overlay is incomplete or the obsolete template remains'
+fi
+
+if [[ -s "$HAY_SAY_HOME/so_vits_svc_4/runtime.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_4/slice_runtime.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_4/inference/infer_tool.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_4_dot_1_stable/inference/infer_tool.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_4_server/main.py" && \
+	! -e "$HAY_SAY_HOME/so_vits_svc_4/inference_main_template.py" ]] && \
+	! grep -q 'inference_main_template' "$HAY_SAY_HOME/so_vits_svc_4_server/main.py"; then
+	pass 'SVC4 uses the native persistent slice runtime'
+else
+	fail 'SVC4 base source/native overlay is incomplete or the obsolete template remains'
+fi
+
+if [[ -s "$HAY_SAY_HOME/so_vits_svc_5_server/runtime.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_server/svc5_runtime.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_server/main.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_server/version_determinator.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_v1/svc_inference.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_v1/configs/base.yaml" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_v1/whisper_pretrain/medium.pt" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_v2/svc_inference.py" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_v2/configs/base.yaml" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_v2/whisper_pretrain/large-v2.pt" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_v2/hubert_pretrain/hubert-soft-0d54a1f4.pt" && \
+	-s "$HAY_SAY_HOME/so_vits_svc_5_v2/crepe/assets/full.pth" ]] && \
+	grep -q 'from svc5_runtime import' "$HAY_SAY_HOME/so_vits_svc_5_server/main.py"; then
+	pass 'SVC5 uses the native persistent replica runtime'
+else
+	fail 'SVC5 native persistent runtime is incomplete'
 fi
 
 if systemctl --user is-enabled --quiet hay-say.target 2>/dev/null; then

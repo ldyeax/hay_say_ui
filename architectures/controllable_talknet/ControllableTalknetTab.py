@@ -1,3 +1,5 @@
+import os
+
 from dash import html, dcc, Input, Output, State, callback
 
 from architectures.AbstractTab import AbstractTab
@@ -96,6 +98,25 @@ class ControllableTalknetTab(AbstractTab):
     @property
     def pitch_batch_bounds(self):
         return -25, 25
+
+    @property
+    def supports_parallel_requests(self):
+        return True
+
+    @property
+    def supports_mixed_device_pitch_batch(self):
+        return True
+
+    def pitch_batch_request_workers(self, selected_device):
+        variable = 'HAY_SAY_TALKNET_CPU_WORKERS' if selected_device == '' else 'HAY_SAY_TALKNET_GPU_WORKERS'
+        default = 8 if selected_device == '' else 1
+        try:
+            workers = int(os.environ.get(variable, str(default)))
+        except ValueError as error:
+            raise ValueError(f'{variable} must be a positive integer') from error
+        if workers < 1:
+            raise ValueError(f'{variable} must be a positive integer')
+        return workers
 
     def construct_input_dict(self, session_data, *args):
         return {

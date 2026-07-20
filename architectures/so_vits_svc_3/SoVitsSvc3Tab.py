@@ -108,6 +108,76 @@ class SoVitsSvc3Tab(AbstractTab):
     def supports_native_pitch_batch(self):
         return True
 
+    @property
+    def supports_parallel_requests(self):
+        return True
+
+    @property
+    def supports_mixed_device_pitch_batch(self):
+        return True
+
+    def mixed_device_caches_are_warm(self, runtime_state, options, cpu_device, gpu_device):
+        if not isinstance(runtime_state, dict) or cpu_device != '':
+            return False
+        character = options.get('Character') if isinstance(options, dict) else None
+        if not isinstance(character, str) or not character:
+            return False
+        character_dir = os.path.realpath(hsc.character_dir(self.id, character))
+        config_path = os.path.realpath(os.path.join(character_dir, 'config.json'))
+        try:
+            model_paths = sorted(
+                os.path.realpath(os.path.join(character_dir, name))
+                for name in os.listdir(character_dir)
+                if name.startswith('G_') and name.endswith('.pth')
+                and os.path.isfile(os.path.join(character_dir, name))
+            )
+        except OSError:
+            return False
+        if len(model_paths) != 1 or not os.path.isfile(config_path):
+            return False
+        try:
+            model_revision = self._file_revision(model_paths[0])
+            config_revision = self._file_revision(config_path)
+        except OSError:
+            return False
+
+        details = runtime_state.get('loaded_model_details')
+        if not isinstance(details, list):
+            return False
+        required_devices = {'cpu', f'cuda:{int(gpu_device)}'}
+        matched_devices = set()
+        for entry in details:
+            if not isinstance(entry, dict) or entry.get('character') != character:
+                continue
+            model_path = entry.get('model_path')
+            loaded_config = entry.get('config_path')
+            device = entry.get('device')
+            if not all(isinstance(value, str) for value in (model_path, loaded_config, device)):
+                continue
+            if (
+                os.path.realpath(model_path) == model_paths[0]
+                and os.path.realpath(loaded_config) == config_path
+                and entry.get('model_revision') == model_revision
+                and entry.get('config_revision') == config_revision
+                and device in required_devices
+            ):
+                matched_devices.add(device)
+        return matched_devices == required_devices
+
+    @staticmethod
+    def _file_revision(path):
+        stat = os.stat(path)
+        return {
+            'device': int(stat.st_dev),
+            'inode': int(stat.st_ino),
+            'size': int(stat.st_size),
+            'modified_ns': int(stat.st_mtime_ns),
+        }
+
+    @property
+    def serializes_device_requests(self):
+        return True
+
     def construct_input_dict(self, session_data, *args):
         return {
             'Architecture': self.id,

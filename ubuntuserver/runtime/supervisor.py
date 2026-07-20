@@ -862,6 +862,15 @@ class RuntimeSupervisor:
         with self._runtime_lock(runtime_id):
             return self._stop_locked(spec)
 
+    def stop_all(self) -> list[dict[str, Any]]:
+        """Stop every managed runtime concurrently during host-service shutdown."""
+        runtime_ids = list(self.config.runtimes)
+        if not runtime_ids:
+            return []
+        with ThreadPoolExecutor(max_workers=len(runtime_ids), thread_name_prefix="runtime-stop") as executor:
+            statuses = dict(zip(runtime_ids, executor.map(self.stop, runtime_ids)))
+        return [statuses[runtime_id] for runtime_id in runtime_ids]
+
     def restart(self, runtime_id: str) -> dict[str, Any]:
         spec = self._spec(runtime_id)
         with self._runtime_lock(runtime_id):

@@ -1,13 +1,17 @@
 import click
-import numpy
 from celery import Celery, bootsteps
 from click import Option
 from dash import Input, Output, State, callback, CeleryManager, ctx
+from dash.exceptions import PreventUpdate
 
 import hay_say_common as hsc
 import main
 import plotly_celery_common as pcc
-from generator import generate_and_prepare_postprocessed_display
+from generator import (
+    GenerationCancelled,
+    GenerationRequestUnavailable,
+    generate_and_prepare_postprocessed_display,
+)
 from celery_config import redis_url
 
 # Set up a background callback manager
@@ -34,42 +38,26 @@ class CacheSelection(bootsteps.Step):
         selected_architectures = pcc.construct_architecture_tabs(include_architecture, cache_implementation)
 
         @callback(
-            output=[Output('message', 'children'),
-                    Output('generate-button-cpu', 'children')],  # To activate the spinner
-            inputs=[Input('generate-button-cpu', 'n_clicks'),
-                    State('session', 'data'),
-                    State('text-input', 'value'),
-                    State('file-dropdown', 'value'),
-                    State('semitone-pitch', 'value'),
-                    State('debug-pitch', 'value'),
-                    State('reduce-noise', 'value'),
-                    State('crop-silence', 'value'),
-                    State('reduce-metallic-sound', 'value'),
-                    State('auto-tune-output', 'value'),
-                    State('adjust-output-speed', 'value'),
-                    State('pitch-batch-enabled', 'value'),
-                    State('pitch-batch-values', 'value')] +
-                   [State(tab.id, 'hidden') for tab in selected_architectures] +
-                   [State(item, 'value') for sublist in   # Add every architecture's inputs as States to the callback
-                    [tab.input_ids for tab in selected_architectures]
-                    for item in sublist],
-            running=[(Output('generate-message', 'hidden'), False, True)],
-            progress=Output('generate-message', 'children'),
-            progress_default='Waiting in queue...',
+            output=Output('generation-result-signal', 'data'),
+            inputs=[Input('cpu-generation-request', 'data')],
             background=True,
             manager=background_callback_manager,
+            prevent_initial_call='initial_duplicate',
         )
-        def generate_with_cpu(set_progress, clicks, session_data, user_text, selected_file, semitone_pitch, debug_pitch,
-                              reduce_noise, crop_silence, reduce_metallic_noise, auto_tune_output,
-                              output_speed_adjustment, pitch_batch_enabled, pitch_batch_values, *args):
-            gpu_id = ''
-            message = 'generating on CPU...'
-            return generate_and_prepare_postprocessed_display(clicks, set_progress, message, cache_implementation,
-                                                              gpu_id, session_data, selected_architectures, user_text,
-                                                              selected_file, semitone_pitch, debug_pitch, reduce_noise,
-                                                              crop_silence, reduce_metallic_noise, auto_tune_output,
-                                                              output_speed_adjustment, pitch_batch_enabled,
-                                                              pitch_batch_values, args)
+        def generate_with_cpu(request_data):
+            if not isinstance(request_data, dict):
+                raise PreventUpdate
+            snapshot = request_data.get('snapshot')
+            hardware_selection = snapshot.get('hardware_selection') if isinstance(snapshot, dict) else None
+            gpu_id = requested_device(hardware_selection)
+            message = 'selecting an available CPU/GPU slot...' if gpu_id == 'auto' else 'generating on CPU...'
+            try:
+                result, _button_label = generate_and_prepare_postprocessed_display(
+                    request_data, message, cache_implementation, gpu_id, selected_architectures,
+                )
+                return result
+            except (GenerationCancelled, GenerationRequestUnavailable):
+                raise PreventUpdate
 
         @callback(
             [Output('hardware-selector', 'options')] +
@@ -78,16 +66,18 @@ class CacheSelection(bootsteps.Step):
             [Input(tab.id + main.TAB_BUTTON_PREFIX, 'n_clicks') for tab in selected_architectures],
         )
         def hide_unused_tabs(current_hardware_selection, *_):
-            if current_hardware_selection is None:
-                hardware_options = [[]]
-                hardware_selection = ['CPU']
-            else:
-                hidden_states = [not (tab.id + main.TAB_BUTTON_PREFIX == ctx.triggered_id) for tab in selected_architectures]
-                selected_tab = get_selected_tab_object(hidden_states)
-                hardware_options = [selected_tab.hardware_options]
-                hardware_selection = ['CPU'] if 'GPU' not in numpy.squeeze(hardware_options) else [
-                    current_hardware_selection]
-            return hardware_options + hardware_selection
+            hidden_states = [
+                not (tab.id + main.TAB_BUTTON_PREFIX == ctx.triggered_id)
+                for tab in selected_architectures
+            ]
+            selected_tab = get_selected_tab_object(hidden_states) if ctx.triggered_id else (
+                selected_architectures[0] if selected_architectures else None
+            )
+            hardware_options, hardware_selection = select_hardware(
+                current_hardware_selection,
+                selected_tab,
+            )
+            return [hardware_options, hardware_selection]
 
         def get_selected_tab_object(hidden_states):
             # Get the tab that is *not* hidden (i.e. hidden == False)
@@ -95,3 +85,17 @@ class CacheSelection(bootsteps.Step):
 
 
 celery_app.steps['worker'].add(CacheSelection)
+
+
+def requested_device(hardware_selection):
+    if hardware_selection in (None, 'Auto'):
+        return 'auto'
+    if hardware_selection == 'CPU':
+        return ''
+    raise ValueError(f'CPU dispatcher received unsupported hardware selection: {hardware_selection!r}')
+
+
+def select_hardware(current_hardware_selection, selected_tab=None):
+    options = selected_tab.hardware_options if selected_tab is not None else ['Auto', 'CPU']
+    selection = current_hardware_selection if current_hardware_selection in options else 'Auto'
+    return options, selection

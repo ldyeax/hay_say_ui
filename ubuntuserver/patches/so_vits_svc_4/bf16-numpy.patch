@@ -1,0 +1,142 @@
+--- a/inference_main.py
++++ b/inference_main.py
+@@ -139,7 +139,7 @@
+                                                         enhancer_adaptive_key = enhancer_adaptive_key,
+                                                         cr_threshold = cr_threshold
+                                                         )
+-                    _audio = out_audio.cpu().numpy()
++                    _audio = out_audio.float().cpu().numpy()
+                     pad_len = int(svc_model.target_sample * pad_seconds)
+                     _audio = _audio[pad_len:-pad_len]
+                     _audio = infer_tool.pad_array(_audio, per_length)
+--- a/inference/infer_tool.py
++++ b/inference/infer_tool.py
+@@ -180,7 +180,7 @@
+         c = utils.repeat_expand_2d(c.squeeze(0), f0.shape[1])
+ 
+         if cluster_infer_ratio !=0:
+-            cluster_c = cluster.get_cluster_center_result(self.cluster_model, c.cpu().numpy().T, speaker).T
++            cluster_c = cluster.get_cluster_center_result(self.cluster_model, c.float().cpu().numpy().T, speaker).T
+             cluster_c = torch.FloatTensor(cluster_c).to(self.dev)
+             c = cluster_infer_ratio * cluster_c + (1 - cluster_infer_ratio) * c
+ 
+@@ -290,7 +290,7 @@
+                                                     enhancer_adaptive_key = enhancer_adaptive_key,
+                                                     cr_threshold = cr_threshold
+                                                     )
+-                _audio = out_audio.cpu().numpy()
++                _audio = out_audio.float().cpu().numpy()
+                 pad_len = int(self.target_sample * pad_seconds)
+                 _audio = _audio[pad_len:-pad_len]
+                 _audio = pad_array(_audio, per_length)
+@@ -321,7 +321,7 @@
+ 
+         import maad
+         audio, sr = torchaudio.load(input_wav_path)
+-        audio = audio.cpu().numpy()[0]
++        audio = audio.float().cpu().numpy()[0]
+         temp_wav = io.BytesIO()
+         if self.last_chunk is None:
+             input_wav_path.seek(0)
+@@ -332,7 +332,7 @@
+                                         noice_scale=noice_scale,
+                                         f0_filter=f0_filter)
+ 
+-            audio = audio.cpu().numpy()
++            audio = audio.float().cpu().numpy()
+             self.last_chunk = audio[-self.pre_len:]
+             self.last_o = audio
+             return audio[-self.chunk_len:]
+@@ -347,7 +347,7 @@
+                                         noice_scale=noice_scale,
+                                         f0_filter=f0_filter)
+ 
+-            audio = audio.cpu().numpy()
++            audio = audio.float().cpu().numpy()
+             ret = maad.util.crossfade(self.last_o, audio, self.pre_len)
+             self.last_chunk = audio[-self.pre_len:]
+             self.last_o = audio
+--- a/inference/slicer.py
++++ b/inference/slicer.py
+@@ -133,7 +133,7 @@
+     audio, sr = torchaudio.load(audio_path)
+     if len(audio.shape) == 2 and audio.shape[1] >= 2:
+         audio = torch.mean(audio, dim=0).unsqueeze(0)
+-    audio = audio.cpu().numpy()[0]
++    audio = audio.float().cpu().numpy()[0]
+     result = []
+     for k, v in chunks.items():
+         tag = v["split_time"].split(",")
+--- a/modules/enhancer.py
++++ b/modules/enhancer.py
+@@ -51,7 +51,7 @@
+         n_frames = int(audio_res.size(-1) // self.enhancer_hop_size + 1)
+         
+         # resample f0
+-        f0_np = f0.squeeze(0).squeeze(-1).cpu().numpy()
++        f0_np = f0.squeeze(0).squeeze(-1).float().cpu().numpy()
+         f0_np *= real_factor
+         time_org = (hop_size / sample_rate) * np.arange(len(f0_np)) / real_factor
+         time_frame = (self.enhancer_hop_size / self.enhancer_sample_rate) * np.arange(n_frames)
+--- a/modules/crepe.py
++++ b/modules/crepe.py
+@@ -43,7 +43,7 @@
+     results = torch.nn.functional.interpolate(content, size=target_len, mode=mode)
+ 
+     if is_np:
+-        results = results.numpy()
++        results = results.float().cpu().numpy()
+ 
+     if ndim == 1:
+         return results[0, 0]
+@@ -94,8 +94,8 @@
+         
+         # Remove 0 frequency and apply linear interpolation
+         nzindex = torch.nonzero(f0).squeeze()
+-        f0 = torch.index_select(f0, dim=0, index=nzindex).cpu().numpy()
+-        time_org = self.hop_length / sampling_rate * nzindex.cpu().numpy()
++        f0 = torch.index_select(f0, dim=0, index=nzindex).float().cpu().numpy()
++        time_org = self.hop_length / sampling_rate * nzindex.float().cpu().numpy()
+         time_frame = np.arange(pad_to) * self.hop_length / sampling_rate
+ 
+         if f0.shape[0] <= 0:
+@@ -106,7 +106,7 @@
+     
+         # Probably can be rewritten with torch?
+         f0 = np.interp(time_frame, time_org, f0, left=f0[0], right=f0[-1])
+-        vuv_vector = vuv_vector.cpu().numpy()
++        vuv_vector = vuv_vector.float().cpu().numpy()
+         vuv_vector = np.ceil(scipy.ndimage.zoom(vuv_vector,pad_to/len(vuv_vector),order = 0))
+         
+         return f0,vuv_vector
+@@ -325,7 +325,7 @@
+         f0 = torch.where(torch.isnan(f0), torch.full_like(f0, 0), f0)[0]
+ 
+         if torch.all(f0 == 0):
+-            rtn = f0.cpu().numpy() if pad_to==None else np.zeros(pad_to)
++            rtn = f0.float().cpu().numpy() if pad_to==None else np.zeros(pad_to)
+             return rtn,rtn
+         
+         return self.post_process(x, sampling_rate, f0, pad_to)
+--- a/vdecoder/nsf_hifigan/nvSTFT.py
++++ b/vdecoder/nsf_hifigan/nvSTFT.py
+@@ -39,7 +39,7 @@
+     if (torch.isinf(data) | torch.isnan(data)).any() and return_empty_on_exception:# resample will crash with inf/NaN inputs. return_empty_on_exception will return empty arr instead of except
+         return [], sampling_rate or target_sr or 48000
+     if target_sr is not None and sampling_rate != target_sr:
+-        data = torch.from_numpy(librosa.core.resample(data.numpy(), orig_sr=sampling_rate, target_sr=target_sr))
++        data = torch.from_numpy(librosa.core.resample(data.float().cpu().numpy(), orig_sr=sampling_rate, target_sr=target_sr))
+         sampling_rate = target_sr
+     
+     return data, sampling_rate
+--- a/vdecoder/hifigan/nvSTFT.py
++++ b/vdecoder/hifigan/nvSTFT.py
+@@ -38,7 +38,7 @@
+     if (torch.isinf(data) | torch.isnan(data)).any() and return_empty_on_exception:# resample will crash with inf/NaN inputs. return_empty_on_exception will return empty arr instead of except
+         return [], sampling_rate or target_sr or 32000
+     if target_sr is not None and sampling_rate != target_sr:
+-        data = torch.from_numpy(librosa.core.resample(data.numpy(), orig_sr=sampling_rate, target_sr=target_sr))
++        data = torch.from_numpy(librosa.core.resample(data.float().cpu().numpy(), orig_sr=sampling_rate, target_sr=target_sr))
+         sampling_rate = target_sr
+     
+     return data, sampling_rate

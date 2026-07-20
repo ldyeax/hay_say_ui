@@ -16,6 +16,8 @@ import soundfile
 import torch
 import torchaudio
 
+from hay_say_torch_bootstrap import cpu_bf16_autocast
+
 from hubert import hubert_model
 import utils
 from models import SynthesizerTrn
@@ -197,6 +199,7 @@ class Svc(object):
                  onnx=False, device=None, hubert=None):
         self.onnx = onnx
         self.net_g_path = net_g_path
+        self.config_path = config_path
         self.hubert_path = hubert_path
         if device is not None:
             self.dev = torch.device(device)
@@ -242,21 +245,21 @@ class Svc(object):
         else:
             _ = self.net_g_ms.eval().to(self.dev)
 
-    def get_units(self, source, sr):
+    def get_units(self, source, sr, cpu_bf16=False):
         del sr
         source = source.unsqueeze(0).to(self.dev)
-        with torch.inference_mode():
+        with torch.inference_mode(), cpu_bf16_autocast(cpu_bf16 and self.dev.type == "cpu"):
             start = time.time()
             units = self.hubert_soft.units(source)
             LOGGER.debug("HuBERT inference took %.3fs", time.time() - start)
-            return units
+            return units.float()
 
     def get_unit_pitch(self, in_path, tran):
         source, sample_rate = load_audio_for_torch(in_path)
         features = self.prepare_features(source, sample_rate, channels_first=True)
         return features.units, self.shift_f0(features.base_f0, tran)
 
-    def prepare_features(self, source, sample_rate, channels_first=False):
+    def prepare_features(self, source, sample_rate, channels_first=False, cpu_bf16=False):
         """Extract source features once so a pitch batch can reuse HuBERT work."""
 
         source = audio_to_mono_tensor(source, channels_first=channels_first)
@@ -264,15 +267,15 @@ class Svc(object):
             raise ValueError("Sample rate must be a positive integer")
         if int(sample_rate) != 16000:
             source = torchaudio.functional.resample(source, int(sample_rate), 16000)
-        units = self.get_units(source, 16000).squeeze(0).cpu().numpy()
-        _, base_f0 = get_f0(source.cpu().numpy()[0], units.shape[0] * 2, 0)
+        units = self.get_units(source, 16000, cpu_bf16=cpu_bf16).squeeze(0).float().cpu().numpy()
+        _, base_f0 = get_f0(source.detach().float().cpu().numpy()[0], units.shape[0] * 2, 0)
         return SvcFeatures(units=units, base_f0=np.asarray(base_f0, dtype=np.float32))
 
     @staticmethod
     def shift_f0(base_f0, semitones):
         return np.asarray(base_f0, dtype=np.float32) * pow(2.0, float(semitones) / 12.0)
 
-    def infer_from_features(self, speaker_id, tran, features):
+    def infer_from_features(self, speaker_id, tran, features, cpu_bf16=False):
         """Synthesize one pitch from previously extracted source features."""
 
         if isinstance(speaker_id, str):
@@ -284,13 +287,32 @@ class Svc(object):
         f0 = torch.FloatTensor(clean_pitch(pitch)).unsqueeze(0).to(self.dev)
         tensor_type = torch.HalfTensor if self.use_half else torch.FloatTensor
         stn_tst = tensor_type(features.units)
-        with torch.inference_mode():
+        with torch.inference_mode(), cpu_bf16_autocast(cpu_bf16 and self.dev.type == "cpu"):
             x_tst = stn_tst.unsqueeze(0).to(self.dev)
             x_tst = torch.repeat_interleave(x_tst, repeats=2, dim=1).transpose(1, 2)
             start = time.time()
             audio = self.net_g_ms.infer(x_tst, f0=f0, g=sid)[0, 0].detach().float()
             LOGGER.debug("VITS inference took %.3fs", time.time() - start)
         return audio, audio.shape[-1]
+
+    def ensure_inference_replicas(self, count):
+        """Keep isolated VITS replicas while sharing the read-only HuBERT encoder."""
+        count = max(1, int(count))
+        if not hasattr(self, "_replica_lock"):
+            import threading
+
+            self._replica_lock = threading.RLock()
+            self._inference_replicas = [self]
+        with self._replica_lock:
+            while len(self._inference_replicas) < count:
+                replica = type(self)(
+                    self.net_g_path,
+                    self.config_path,
+                    device=str(self.dev),
+                    hubert=self.hubert_soft,
+                )
+                self._inference_replicas.append(replica)
+            return tuple(self._inference_replicas[:count])
 
     def infer(self, speaker_id, tran, raw_path):
         source, sample_rate = load_audio_for_torch(raw_path)
@@ -299,6 +321,12 @@ class Svc(object):
 
     def close(self):
         """Release model tensors without moving an injected shared HuBERT."""
+
+        replicas = getattr(self, "_inference_replicas", ())
+        for replica in replicas[1:]:
+            replica.close()
+        if hasattr(self, "_inference_replicas"):
+            self._inference_replicas = [self]
 
         if self.net_g_ms is not None:
             try:

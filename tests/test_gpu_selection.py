@@ -21,7 +21,6 @@ def test_invalid_gpu_configuration_fails_early(value):
 
 
 def test_cold_runtime_can_use_a_configured_host_gpu(monkeypatch):
-    gpu_selection.detected_gpu_ids.cache_clear()
     monkeypatch.setattr(gpu_selection.shutil, "which", lambda _: "/usr/bin/nvidia-smi")
     monkeypatch.setattr(
         gpu_selection.subprocess,
@@ -31,3 +30,17 @@ def test_cold_runtime_can_use_a_configured_host_gpu(monkeypatch):
 
     assert configured_gpu_available("2")
     assert not configured_gpu_available("1")
+
+
+def test_live_gpu_status_includes_free_memory_and_utilization(monkeypatch):
+    monkeypatch.setattr(gpu_selection.shutil, "which", lambda _: "/usr/bin/nvidia-smi")
+    monkeypatch.setattr(
+        gpu_selection.subprocess,
+        "run",
+        lambda *_, **__: SimpleNamespace(stdout="0, 22000, 7\n2, 1000, 98\n"),
+    )
+
+    assert gpu_selection.detected_gpu_status() == {
+        0: {"free_memory_mib": 22000, "utilization_percent": 7},
+        2: {"free_memory_mib": 1000, "utilization_percent": 98},
+    }

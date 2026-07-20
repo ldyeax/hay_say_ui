@@ -1,0 +1,95 @@
+--- a/GPT_SoVITS/inference_cli.py
++++ b/GPT_SoVITS/inference_cli.py
+@@ -18,7 +18,7 @@
+ 
+ def synthesize(GPT_model_path, SoVITS_model_path, precomputed_traits_file, ref_audio_path, ref_text_path, ref_language,
+                target_text_path, target_language, output_path, how_to_cut, top_k, top_p, temperature, ref_free, speed,
+-               additional_inp_refs, precomputed_trait):
++               additional_inp_refs, precomputed_trait, load_weights=True, cancel_check=None):
+ 
+     if precomputed_traits_file:
+         ref_audio_path, ref_text = None, None
+@@ -53,9 +53,11 @@
+     with open(target_text_path, 'r', encoding='utf-8') as file:
+         target_text = file.read()
+ 
+-    # Change model weights
+-    change_gpt_weights(gpt_path=GPT_model_path)
+-    change_sovits_weights(sovits_path=SoVITS_model_path)
++    if cancel_check is not None:
++        cancel_check()
++    if load_weights:
++        change_gpt_weights(gpt_path=GPT_model_path)
++        change_sovits_weights(sovits_path=SoVITS_model_path)
+ 
+     # Synthesize audio
+     synthesis_result = get_tts_wav(ref_wav_path=ref_audio_path,
+@@ -73,7 +75,8 @@
+                                    precomputed_prompt=precomputed_prompt,
+                                    precomputed_phones1=precomputed_phones1,
+                                    precomputed_bert1=precomputed_bert1,
+-                                   precomputed_ge=precomputed_ge)
++                                   precomputed_ge=precomputed_ge,
++                                   cancel_check=cancel_check)
+ 
+     result_list = list(synthesis_result)
+ 
+@@ -80,8 +83,10 @@
+     if result_list:
+         last_sampling_rate, last_audio_data = result_list[-1]
+         output_wav_path = os.path.join(output_path, "output.wav")
+         sf.write(output_wav_path, last_audio_data, last_sampling_rate)
++        if cancel_check is not None:
++            cancel_check()
+         print(f"Audio saved to {output_wav_path}")
+ 
+ 
+ def main():
+--- a/GPT_SoVITS/inference_webui.py
++++ b/GPT_SoVITS/inference_webui.py
+@@ -552,9 +552,12 @@
+ 
+ def get_tts_wav(ref_wav_path, ref_text, ref_language, prompt_text, prompt_language, how_to_cut=i18n("不切"),
+                 top_k=20, top_p=0.6, temperature=0.6, ref_free=False, speed=1, if_freeze=False, inp_refs=None,
+-                precomputed_prompt=None, precomputed_phones1=None, precomputed_bert1=None, precomputed_ge=None):
++                precomputed_prompt=None, precomputed_phones1=None, precomputed_bert1=None, precomputed_ge=None,
++                cancel_check=None):
+     global cache
+ 
++    if cancel_check is not None:
++        cancel_check()
+     valid = validate_inputs(ref_wav_path, ref_text, ref_language, prompt_text, prompt_language, ref_free,
+                             precomputed_phones1, precomputed_bert1, precomputed_ge)
+     if not valid:
+@@ -566,6 +569,8 @@
+     phones1, bert1, ref_free = preprocess_reference_text(ref_text, ref_language, ref_free, precomputed_phones1, precomputed_bert1)
+     prompt, ge = preprocess_reference_audios(ref_wav_path, ref_free, inp_refs, precomputed_prompt, precomputed_ge)
+     prompt_texts, prompt_language = preprocess_and_slice_prompt(prompt_text, prompt_language, how_to_cut)
++    if cancel_check is not None:
++        cancel_check()
+ 
+     t1 = ttime()
+     t.append(t1-t0)
+@@ -573,6 +578,8 @@
+     # Loop through the prompt text slices and generate audio
+     audio_out = []
+     for i_text, prompt_text_segment in enumerate(prompt_texts):
++        if cancel_check is not None:
++            cancel_check()
+         # 解决输入目标文本的空行导致报错的问题
+         if len(prompt_text_segment.strip()) == 0:
+             continue
+@@ -610,9 +617,13 @@
+                 )
+                 pred_semantic = pred_semantic[:, -idx:].unsqueeze(0)
+                 cache[i_text] = pred_semantic
++        if cancel_check is not None:
++            cancel_check()
+         t3 = ttime()
+ 
+         audio = (vq_model.decode(pred_semantic, torch.LongTensor(phones2).to(device).unsqueeze(0), ge, speed=speed).detach().float().cpu().numpy()[0, 0])
++        if cancel_check is not None:
++            cancel_check()
+         max_audio = np.abs(audio).max()  # 简单防止16bit爆音
+         if max_audio > 1:
+             audio /= max_audio

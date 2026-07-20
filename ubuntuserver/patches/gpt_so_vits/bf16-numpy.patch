@@ -1,0 +1,11 @@
+--- a/GPT_SoVITS/inference_webui.py
++++ b/GPT_SoVITS/inference_webui.py
+@@ -612,7 +612,7 @@
+                 cache[i_text] = pred_semantic
+         t3 = ttime()
+ 
+-        audio = (vq_model.decode(pred_semantic, torch.LongTensor(phones2).to(device).unsqueeze(0), ge, speed=speed).detach().cpu().numpy()[0, 0])
++        audio = (vq_model.decode(pred_semantic, torch.LongTensor(phones2).to(device).unsqueeze(0), ge, speed=speed).detach().float().cpu().numpy()[0, 0])
+         max_audio = np.abs(audio).max()  # 简单防止16bit爆音
+         if max_audio > 1:
+             audio /= max_audio

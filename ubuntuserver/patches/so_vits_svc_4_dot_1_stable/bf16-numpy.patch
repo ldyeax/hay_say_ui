@@ -1,0 +1,371 @@
+--- a/inference/infer_tool.py
++++ b/inference/infer_tool.py
+@@ -233,7 +233,7 @@
+                 if speaker_id is None:
+                     raise RuntimeError("The name you entered is not in the speaker list!")
+                 feature_index = self.cluster_model[speaker_id]
+-                feat_np = np.ascontiguousarray(c.transpose(0,1).cpu().numpy())
++                feat_np = np.ascontiguousarray(c.transpose(0,1).float().cpu().numpy())
+                 if self.big_npy is None or self.now_spk_id != speaker_id:
+                    self.big_npy = feature_index.reconstruct_n(0, feature_index.ntotal)
+                    self.now_spk_id = speaker_id
+@@ -246,7 +246,7 @@
+                 c = torch.FloatTensor(c).to(self.dev).transpose(0,1)
+                 print("end feature retrieval...")
+             else:
+-                cluster_c = cluster.get_cluster_center_result(self.cluster_model, c.cpu().numpy().T, speaker).T
++                cluster_c = cluster.get_cluster_center_result(self.cluster_model, c.float().cpu().numpy().T, speaker).T
+                 cluster_c = torch.FloatTensor(cluster_c).to(self.dev)
+                 c = cluster_infer_ratio * cluster_c + (1 - cluster_infer_ratio) * c
+ 
+@@ -271,7 +271,7 @@
+         wav, sr = torchaudio.load(raw_path)
+         if not hasattr(self,"audio_resample_transform") or self.audio16k_resample_transform.orig_freq != sr:
+             self.audio_resample_transform = torchaudio.transforms.Resample(sr,self.target_sample)
+-        wav = self.audio_resample_transform(wav).numpy()[0]
++        wav = self.audio_resample_transform(wav).float().cpu().numpy()[0]
+         if spk_mix:
+             c, f0, uv = self.get_unit_f0(wav, tran, 0, None, f0_filter,f0_predictor,cr_threshold=cr_threshold)
+             n_frames = f0.size(1)
+@@ -481,7 +481,7 @@
+                                                     loudness_envelope_adjustment = loudness_envelope_adjustment
+                                                     )
+                 global_frame += out_frame
+-                _audio = out_audio.cpu().numpy()
++                _audio = out_audio.float().cpu().numpy()
+                 pad_len = int(self.target_sample * pad_seconds)
+                 _audio = _audio[pad_len:-pad_len]
+                 _audio = pad_array(_audio, per_length)
+@@ -512,7 +512,7 @@
+ 
+         import maad
+         audio, sr = torchaudio.load(input_wav_path)
+-        audio = audio.cpu().numpy()[0]
++        audio = audio.float().cpu().numpy()[0]
+         temp_wav = io.BytesIO()
+         if self.last_chunk is None:
+             input_wav_path.seek(0)
+@@ -523,7 +523,7 @@
+                                         noice_scale=noice_scale,
+                                         f0_filter=f0_filter)
+             
+-            audio = audio.cpu().numpy()
++            audio = audio.float().cpu().numpy()
+             self.last_chunk = audio[-self.pre_len:]
+             self.last_o = audio
+             return audio[-self.chunk_len:]
+@@ -538,7 +538,7 @@
+                                         noice_scale=noice_scale,
+                                         f0_filter=f0_filter)
+ 
+-            audio = audio.cpu().numpy()
++            audio = audio.float().cpu().numpy()
+             ret = maad.util.crossfade(self.last_o, audio, self.pre_len)
+             self.last_chunk = audio[-self.pre_len:]
+             self.last_o = audio
+--- a/inference/slicer.py
++++ b/inference/slicer.py
+@@ -133,7 +133,7 @@
+     audio, sr = torchaudio.load(audio_path)
+     if len(audio.shape) == 2 and audio.shape[1] >= 2:
+         audio = torch.mean(audio, dim=0).unsqueeze(0)
+-    audio = audio.cpu().numpy()[0]
++    audio = audio.float().cpu().numpy()[0]
+     result = []
+     for k, v in chunks.items():
+         tag = v["split_time"].split(",")
+--- a/modules/enhancer.py
++++ b/modules/enhancer.py
+@@ -53,7 +53,7 @@
+         n_frames = int(audio_res.size(-1) // self.enhancer_hop_size + 1)
+         
+         # resample f0
+-        f0_np = f0.squeeze(0).squeeze(-1).cpu().numpy()
++        f0_np = f0.squeeze(0).squeeze(-1).float().cpu().numpy()
+         f0_np *= real_factor
+         time_org = (hop_size / sample_rate) * np.arange(len(f0_np)) / real_factor
+         time_frame = (self.enhancer_hop_size / self.enhancer_sample_rate) * np.arange(n_frames)
+--- a/modules/F0Predictor/crepe.py
++++ b/modules/F0Predictor/crepe.py
+@@ -43,7 +43,7 @@
+     results = torch.nn.functional.interpolate(content, size=target_len, mode=mode)
+ 
+     if is_np:
+-        results = results.numpy()
++        results = results.float().cpu().numpy()
+ 
+     if ndim == 1:
+         return results[0, 0]
+@@ -94,8 +94,8 @@
+         
+         # 去掉0频率, 并线性插值
+         nzindex = torch.nonzero(f0).squeeze()
+-        f0 = torch.index_select(f0, dim=0, index=nzindex).cpu().numpy()
+-        time_org = self.hop_length / sampling_rate * nzindex.cpu().numpy()
++        f0 = torch.index_select(f0, dim=0, index=nzindex).float().cpu().numpy()
++        time_org = self.hop_length / sampling_rate * nzindex.float().cpu().numpy()
+         time_frame = np.arange(pad_to) * self.hop_length / sampling_rate
+         
+         vuv_vector = F.interpolate(vuv_vector[None,None,:],size=pad_to)[0][0]
+@@ -101,15 +101,15 @@
+         vuv_vector = F.interpolate(vuv_vector[None,None,:],size=pad_to)[0][0]
+ 
+         if f0.shape[0] <= 0:
+-            return torch.zeros(pad_to, dtype=torch.float, device=x.device),vuv_vector.cpu().numpy()
++            return torch.zeros(pad_to, dtype=torch.float, device=x.device),vuv_vector.float().cpu().numpy()
+         if f0.shape[0] == 1:
+-            return torch.ones(pad_to, dtype=torch.float, device=x.device) * f0[0],vuv_vector.cpu().numpy()
++            return torch.ones(pad_to, dtype=torch.float, device=x.device) * f0[0],vuv_vector.float().cpu().numpy()
+     
+         # 大概可以用 torch 重写?
+         f0 = np.interp(time_frame, time_org, f0, left=f0[0], right=f0[-1])
+         #vuv_vector = np.ceil(scipy.ndimage.zoom(vuv_vector,pad_to/len(vuv_vector),order = 0))
+         
+-        return f0,vuv_vector.cpu().numpy()
++        return f0,vuv_vector.float().cpu().numpy()
+ 
+ 
+ class MaskedAvgPool1d(nn.Module):
+@@ -334,7 +334,7 @@
+         f0 = torch.where(torch.isnan(f0), torch.full_like(f0, 0), f0)[0]
+ 
+         if torch.all(f0 == 0):
+-            rtn = f0.cpu().numpy() if pad_to is None else np.zeros(pad_to)
++            rtn = f0.float().cpu().numpy() if pad_to is None else np.zeros(pad_to)
+             return rtn,rtn
+         
+         return self.post_process(x, sampling_rate, f0, pad_to)
+--- a/modules/F0Predictor/RMVPEF0Predictor.py
++++ b/modules/F0Predictor/RMVPEF0Predictor.py
+@@ -43,7 +43,7 @@
+         results = torch.nn.functional.interpolate(content, size=target_len, mode=mode)
+ 
+         if is_np:
+-            results = results.numpy()
++            results = results.float().cpu().numpy()
+ 
+         if ndim == 1:
+             return results[0, 0]
+@@ -65,22 +65,22 @@
+         
+         # 去掉0频率, 并线性插值
+         nzindex = torch.nonzero(f0).squeeze()
+-        f0 = torch.index_select(f0, dim=0, index=nzindex).cpu().numpy()
+-        time_org = self.hop_length / sampling_rate * nzindex.cpu().numpy()
++        f0 = torch.index_select(f0, dim=0, index=nzindex).float().cpu().numpy()
++        time_org = self.hop_length / sampling_rate * nzindex.float().cpu().numpy()
+         time_frame = np.arange(pad_to) * self.hop_length / sampling_rate
+         
+         vuv_vector = F.interpolate(vuv_vector[None,None,:],size=pad_to)[0][0]
+ 
+         if f0.shape[0] <= 0:
+-            return torch.zeros(pad_to, dtype=torch.float, device=x.device).cpu().numpy(),vuv_vector.cpu().numpy()
++            return torch.zeros(pad_to, dtype=torch.float, device=x.device).cpu().numpy(),vuv_vector.float().cpu().numpy()
+         if f0.shape[0] == 1:
+-            return (torch.ones(pad_to, dtype=torch.float, device=x.device) * f0[0]).cpu().numpy() ,vuv_vector.cpu().numpy()
++            return (torch.ones(pad_to, dtype=torch.float, device=x.device) * f0[0]).cpu().numpy() ,vuv_vector.float().cpu().numpy()
+     
+         # 大概可以用 torch 重写?
+         f0 = np.interp(time_frame, time_org, f0, left=f0[0], right=f0[-1])
+         #vuv_vector = np.ceil(scipy.ndimage.zoom(vuv_vector,pad_to/len(vuv_vector),order = 0))
+         
+-        return f0,vuv_vector.cpu().numpy()
++        return f0,vuv_vector.float().cpu().numpy()
+ 
+     def compute_f0(self,wav,p_len=None):
+         x = torch.FloatTensor(wav).to(self.dtype).to(self.device)
+@@ -90,7 +90,7 @@
+             assert abs(p_len-x.shape[0]//self.hop_length) < 4, "pad length error"
+         f0 = self.rmvpe.infer_from_audio(x,self.sampling_rate,self.threshold)
+         if torch.all(f0 == 0):
+-            rtn = f0.cpu().numpy() if p_len is None else np.zeros(p_len)
++            rtn = f0.float().cpu().numpy() if p_len is None else np.zeros(p_len)
+             return rtn,rtn
+         return self.post_process(x,self.sampling_rate,f0,p_len)[0]
+     
+@@ -102,6 +102,6 @@
+             assert abs(p_len-x.shape[0]//self.hop_length) < 4, "pad length error"
+         f0 = self.rmvpe.infer_from_audio(x,self.sampling_rate,self.threshold)
+         if torch.all(f0 == 0):
+-            rtn = f0.cpu().numpy() if p_len is None else np.zeros(p_len)
++            rtn = f0.float().cpu().numpy() if p_len is None else np.zeros(p_len)
+             return rtn,rtn
+         return self.post_process(x,self.sampling_rate,f0,p_len)
+--- a/modules/F0Predictor/FCPEF0Predictor.py
++++ b/modules/F0Predictor/FCPEF0Predictor.py
+@@ -44,7 +44,7 @@
+         results = torch.nn.functional.interpolate(content, size=target_len, mode=mode)
+ 
+         if is_np:
+-            results = results.numpy()
++            results = results.float().cpu().numpy()
+ 
+         if ndim == 1:
+             return results[0, 0]
+@@ -66,23 +66,23 @@
+ 
+         # 去掉0频率, 并线性插值
+         nzindex = torch.nonzero(f0).squeeze()
+-        f0 = torch.index_select(f0, dim=0, index=nzindex).cpu().numpy()
+-        time_org = self.hop_length / sampling_rate * nzindex.cpu().numpy()
++        f0 = torch.index_select(f0, dim=0, index=nzindex).float().cpu().numpy()
++        time_org = self.hop_length / sampling_rate * nzindex.float().cpu().numpy()
+         time_frame = np.arange(pad_to) * self.hop_length / sampling_rate
+ 
+         vuv_vector = F.interpolate(vuv_vector[None, None, :], size=pad_to)[0][0]
+ 
+         if f0.shape[0] <= 0:
+-            return torch.zeros(pad_to, dtype=torch.float, device=x.device).cpu().numpy(), vuv_vector.cpu().numpy()
++            return torch.zeros(pad_to, dtype=torch.float, device=x.device).cpu().numpy(), vuv_vector.float().cpu().numpy()
+         if f0.shape[0] == 1:
+             return (torch.ones(pad_to, dtype=torch.float, device=x.device) * f0[
+-                0]).cpu().numpy(), vuv_vector.cpu().numpy()
++                0]).cpu().numpy(), vuv_vector.float().cpu().numpy()
+ 
+         # 大概可以用 torch 重写?
+         f0 = np.interp(time_frame, time_org, f0, left=f0[0], right=f0[-1])
+         # vuv_vector = np.ceil(scipy.ndimage.zoom(vuv_vector,pad_to/len(vuv_vector),order = 0))
+ 
+-        return f0, vuv_vector.cpu().numpy()
++        return f0, vuv_vector.float().cpu().numpy()
+ 
+     def compute_f0(self, wav, p_len=None):
+         x = torch.FloatTensor(wav).to(self.dtype).to(self.device)
+@@ -92,7 +92,7 @@
+             assert abs(p_len - x.shape[0] // self.hop_length) < 4, "pad length error"
+         f0 = self.fcpe(x, sr=self.sampling_rate, threshold=self.threshold)[0,:,0]
+         if torch.all(f0 == 0):
+-            rtn = f0.cpu().numpy() if p_len is None else np.zeros(p_len)
++            rtn = f0.float().cpu().numpy() if p_len is None else np.zeros(p_len)
+             return rtn, rtn
+         return self.post_process(x, self.sampling_rate, f0, p_len)[0]
+ 
+@@ -104,6 +104,6 @@
+             assert abs(p_len - x.shape[0] // self.hop_length) < 4, "pad length error"
+         f0 = self.fcpe(x, sr=self.sampling_rate, threshold=self.threshold)[0,:,0]
+         if torch.all(f0 == 0):
+-            rtn = f0.cpu().numpy() if p_len is None else np.zeros(p_len)
++            rtn = f0.float().cpu().numpy() if p_len is None else np.zeros(p_len)
+             return rtn, rtn
+         return self.post_process(x, self.sampling_rate, f0, p_len)
+--- a/modules/F0Predictor/rmvpe/utils.py
++++ b/modules/F0Predictor/rmvpe/utils.py
+@@ -100,7 +100,7 @@
+     prob = prob / prob.sum(axis=0)    
+ 
+     # Perform viterbi decoding
+-    path = librosa.sequence.viterbi(prob.detach().cpu().numpy(), to_viterbi_cents.transition).astype(np.int64)
++    path = librosa.sequence.viterbi(prob.detach().float().cpu().numpy(), to_viterbi_cents.transition).astype(np.int64)
+ 
+     return torch.Tensor([to_local_average_cents(salience[i, :], path[i], thred) for i in
+                      range(len(path))]).to(salience.device)
+--- a/utils.py
++++ b/utils.py
+@@ -442,7 +442,7 @@
+     rms1 = librosa.feature.rms(
+         y=data1, frame_length=sr1 // 2 * 2, hop_length=sr1 // 2
+     )  # 每半秒一个点
+-    rms2 = librosa.feature.rms(y=data2.detach().cpu().numpy(), frame_length=sr2 // 2 * 2, hop_length=sr2 // 2)
++    rms2 = librosa.feature.rms(y=data2.detach().float().cpu().numpy(), frame_length=sr2 // 2 * 2, hop_length=sr2 // 2)
+     rms1 = torch.from_numpy(rms1).to(data2.device)
+     rms1 = F.interpolate(
+         rms1.unsqueeze(0), size=data2.shape[0], mode="linear"
+--- a/vdecoder/nsf_hifigan/nvSTFT.py
++++ b/vdecoder/nsf_hifigan/nvSTFT.py
+@@ -37,7 +37,7 @@
+     if (torch.isinf(data) | torch.isnan(data)).any() and return_empty_on_exception:# resample will crash with inf/NaN inputs. return_empty_on_exception will return empty arr instead of except
+         return [], sampling_rate or target_sr or 48000
+     if target_sr is not None and sampling_rate != target_sr:
+-        data = torch.from_numpy(librosa.core.resample(data.numpy(), orig_sr=sampling_rate, target_sr=target_sr))
++        data = torch.from_numpy(librosa.core.resample(data.float().cpu().numpy(), orig_sr=sampling_rate, target_sr=target_sr))
+         sampling_rate = target_sr
+     
+     return data, sampling_rate
+--- a/vdecoder/hifigan/nvSTFT.py
++++ b/vdecoder/hifigan/nvSTFT.py
+@@ -36,7 +36,7 @@
+     if (torch.isinf(data) | torch.isnan(data)).any() and return_empty_on_exception:# resample will crash with inf/NaN inputs. return_empty_on_exception will return empty arr instead of except
+         return [], sampling_rate or target_sr or 32000
+     if target_sr is not None and sampling_rate != target_sr:
+-        data = torch.from_numpy(librosa.core.resample(data.numpy(), orig_sr=sampling_rate, target_sr=target_sr))
++        data = torch.from_numpy(librosa.core.resample(data.float().cpu().numpy(), orig_sr=sampling_rate, target_sr=target_sr))
+         sampling_rate = target_sr
+     
+     return data, sampling_rate
+--- a/vdecoder/hifiganwithsnake/nvSTFT.py
++++ b/vdecoder/hifiganwithsnake/nvSTFT.py
+@@ -36,7 +36,7 @@
+     if (torch.isinf(data) | torch.isnan(data)).any() and return_empty_on_exception:# resample will crash with inf/NaN inputs. return_empty_on_exception will return empty arr instead of except
+         return [], sampling_rate or target_sr or 32000
+     if target_sr is not None and sampling_rate != target_sr:
+-        data = torch.from_numpy(librosa.core.resample(data.numpy(), orig_sr=sampling_rate, target_sr=target_sr))
++        data = torch.from_numpy(librosa.core.resample(data.float().cpu().numpy(), orig_sr=sampling_rate, target_sr=target_sr))
+         sampling_rate = target_sr
+     
+     return data, sampling_rate
+--- a/modules/F0Predictor/fcpe/nvSTFT.py
++++ b/modules/F0Predictor/fcpe/nvSTFT.py
+@@ -37,7 +37,7 @@
+     if (torch.isinf(data) | torch.isnan(data)).any() and return_empty_on_exception:# resample will crash with inf/NaN inputs. return_empty_on_exception will return empty arr instead of except
+         return [], sampling_rate or target_sr or 48000
+     if target_sr is not None and sampling_rate != target_sr:
+-        data = torch.from_numpy(librosa.core.resample(data.numpy(), orig_sr=sampling_rate, target_sr=target_sr))
++        data = torch.from_numpy(librosa.core.resample(data.float().cpu().numpy(), orig_sr=sampling_rate, target_sr=target_sr))
+         sampling_rate = target_sr
+     
+     return data, sampling_rate
+--- a/vencoder/HubertSoft_Onnx.py
++++ b/vencoder/HubertSoft_Onnx.py
+@@ -27,7 +27,7 @@
+             feats = feats.mean(-1)
+         assert feats.dim() == 1, feats.dim()
+         feats = feats.view(1, -1)
+-        feats = feats.unsqueeze(0).cpu().detach().numpy()
++        feats = feats.unsqueeze(0).float().cpu().detach().numpy()
+         onnx_input = {self.model.get_inputs()[0].name: feats}
+         logits = self.model.run(None, onnx_input)
+         return torch.tensor(logits[0]).transpose(1, 2).to(self.dev)
+--- a/vencoder/ContentVec768L9_Onnx.py
++++ b/vencoder/ContentVec768L9_Onnx.py
+@@ -27,7 +27,7 @@
+             feats = feats.mean(-1)
+         assert feats.dim() == 1, feats.dim()
+         feats = feats.view(1, -1)
+-        feats = feats.unsqueeze(0).cpu().detach().numpy()
++        feats = feats.unsqueeze(0).float().cpu().detach().numpy()
+         onnx_input = {self.model.get_inputs()[0].name: feats}
+         logits = self.model.run(None, onnx_input)
+         return torch.tensor(logits[0]).transpose(1, 2).to(self.dev)
+--- a/vencoder/ContentVec768L12_Onnx.py
++++ b/vencoder/ContentVec768L12_Onnx.py
+@@ -27,7 +27,7 @@
+             feats = feats.mean(-1)
+         assert feats.dim() == 1, feats.dim()
+         feats = feats.view(1, -1)
+-        feats = feats.unsqueeze(0).cpu().detach().numpy()
++        feats = feats.unsqueeze(0).float().cpu().detach().numpy()
+         onnx_input = {self.model.get_inputs()[0].name: feats}
+         logits = self.model.run(None, onnx_input)
+         return torch.tensor(logits[0]).transpose(1, 2).to(self.dev)
+--- a/vencoder/ContentVec256L9_Onnx.py
++++ b/vencoder/ContentVec256L9_Onnx.py
+@@ -25,7 +25,7 @@
+             feats = feats.mean(-1)
+         assert feats.dim() == 1, feats.dim()
+         feats = feats.view(1, -1)
+-        feats = feats.unsqueeze(0).cpu().detach().numpy()
++        feats = feats.unsqueeze(0).float().cpu().detach().numpy()
+         onnx_input = {self.model.get_inputs()[0].name: feats}
+         logits = self.model.run(None, onnx_input)
+         return torch.tensor(logits[0]).transpose(1, 2).to(self.dev)
+--- a/vencoder/ContentVec256L12_Onnx.py
++++ b/vencoder/ContentVec256L12_Onnx.py
+@@ -27,7 +27,7 @@
+             feats = feats.mean(-1)
+         assert feats.dim() == 1, feats.dim()
+         feats = feats.view(1, -1)
+-        feats = feats.unsqueeze(0).cpu().detach().numpy()
++        feats = feats.unsqueeze(0).float().cpu().detach().numpy()
+         onnx_input = {self.model.get_inputs()[0].name: feats}
+         logits = self.model.run(None, onnx_input)
+         return torch.tensor(logits[0]).transpose(1, 2).to(self.dev)

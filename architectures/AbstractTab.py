@@ -131,6 +131,29 @@ class AbstractTab(ABC):
         return False
 
     @property
+    def supports_parallel_requests(self):
+        """Whether request-local state permits concurrent inference calls."""
+        return False
+
+    @property
+    def supports_mixed_device_pitch_batch(self):
+        """Whether an Auto pitch batch may be split across CPU and CUDA."""
+        return False
+
+    def pitch_batch_request_workers(self, selected_device):
+        """Concurrent service requests a pitch batch may issue to one device."""
+        return 1
+
+    def mixed_device_caches_are_warm(self, runtime_state, options, cpu_device, gpu_device):
+        """Return whether a mixed batch avoids cold model loads on both devices."""
+        return False
+
+    @property
+    def serializes_device_requests(self):
+        """Whether the backend admits only one request at a time per device."""
+        return False
+
+    @property
     def cache_generated_output(self):
         """Whether identical inputs are expected to produce identical model audio."""
         return True
@@ -160,7 +183,7 @@ class AbstractTab(ABC):
     @property
     def hardware_options(self):
         print("GPU available: " + str(self.is_gpu_available), flush=True)
-        return [*((['GPU']) if self.is_gpu_available else ()), 'CPU']
+        return ['Auto', *((['GPU']) if self.is_gpu_available else ()), 'CPU']
 
     @property
     def is_gpu_available(self):

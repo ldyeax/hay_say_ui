@@ -244,6 +244,19 @@ class RuntimeSupervisorTests(unittest.TestCase):
             self.assertEqual(environment["PYTHONUNBUFFERED"], "1")
             supervisor.stop("rvc")
 
+    def test_stop_all_stops_each_runtime_and_clears_stale_error_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fakes = FakeProcesses()
+            supervisor = make_supervisor(root, fakes)
+            started = supervisor.start("rvc")
+
+            stopped = supervisor.stop_all()
+
+            self.assertEqual([status["status"] for status in stopped], ["stopped"])
+            self.assertEqual(fakes.signals, [(started["pid"], signal.SIGTERM)])
+            self.assertEqual(supervisor.status("rvc")["status"], "stopped")
+
     def test_runtime_endpoint_drives_warm_busy_and_resource_metrics(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

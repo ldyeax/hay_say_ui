@@ -49,6 +49,10 @@ def create_app(supervisor: RuntimeSupervisor) -> Any:
         result = supervisor.restart(runtime_id)
         return jsonify(result), 202 if result["status"] == "starting" else 200
 
+    @app.post("/runtimes/stop-all")
+    def stop_all_runtimes() -> Any:
+        return jsonify({"runtimes": supervisor.stop_all()})
+
     @app.errorhandler(RuntimeNotFoundError)
     def not_found(error: RuntimeNotFoundError) -> Any:
         return jsonify({"error": str(error), "type": "not_found"}), 404

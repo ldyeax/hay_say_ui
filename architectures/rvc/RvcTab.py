@@ -212,6 +212,25 @@ class RvcTab(AbstractTab):
     def pitch_batch_key(self):
         return 'Pitch Shift'
 
+    @property
+    def supports_parallel_requests(self):
+        return True
+
+    @property
+    def supports_mixed_device_pitch_batch(self):
+        return True
+
+    def pitch_batch_request_workers(self, selected_device):
+        variable = 'HAY_SAY_RVC_CPU_WORKERS' if selected_device == '' else 'HAY_SAY_RVC_GPU_WORKERS'
+        default = 12 if selected_device == '' else 1
+        try:
+            workers = int(os.environ.get(variable, str(default)))
+        except ValueError as error:
+            raise ValueError(f'{variable} must be a positive integer') from error
+        if workers < 1:
+            raise ValueError(f'{variable} must be a positive integer')
+        return workers
+
     def construct_input_dict(self, session_data, *args):
         input_dict = {
             'Architecture': self.id,

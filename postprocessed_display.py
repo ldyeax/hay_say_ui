@@ -3,16 +3,12 @@ from numbers import Number
 from dash import html, dcc
 from hay_say_common.cache import Stage
 
-import hay_say_common as hsc
-import plotly_celery_common as pcc
-
-CACHE_FORMAT, CACHE_EXTENSION, CACHE_MIMETYPE = 'FLAC', '.flac', 'audio/flac;base64'
+import cache_media
+import output_download
 
 
 def prepare_postprocessed_display(cache, hash_postprocessed, session_data, highlight=False):
     # todo: color-code the information in the display.
-    bytes_postprocessed = cache.read_file_bytes(Stage.POSTPROCESSED, session_data['id'], hash_postprocessed)
-
     metadata = cache.read_metadata(Stage.POSTPROCESSED, session_data['id'])[hash_postprocessed]
     selected_file = metadata['Inputs']['User File']
     user_text = metadata['Inputs']['User Text']
@@ -30,6 +26,19 @@ def prepare_postprocessed_display(cache, hash_postprocessed, session_data, highl
     auto_tune_output = metadata['Postprocessing Options']['Auto Tune Output']
     timestamp = metadata['Time of Creation']
 
+    download_buttons = [
+        html.Button('Download', id={'type': 'output-download-button', 'index': hash_postprocessed}),
+    ]
+    downloads = [dcc.Download(id={'type': 'output-download', 'index': hash_postprocessed})]
+    for batch_key, batch_label in output_download.pitch_batch_controls(metadata, hash_postprocessed):
+        download_buttons.append(
+            html.Button(
+                batch_label,
+                id={'type': 'batch-download-button', 'index': batch_key},
+            )
+        )
+        downloads.append(dcc.Download(id={'type': 'batch-download', 'index': batch_key}))
+
     display = html.Div([
         html.Div(style={'height': '30px'}),  # todo: There's got to be a better way to add spacing
         html.Table([
@@ -41,11 +50,17 @@ def prepare_postprocessed_display(cache, hash_postprocessed, session_data, highl
             html.Tr([
                 html.Td(''),
                 html.Td([
-                    html.Audio(src=pcc.prepare_src_attribute(bytes_postprocessed, hsc.cache.CACHE_MIMETYPE), controls=True),
+                    html.Audio(
+                        src=cache_media.cache_audio_url(
+                            Stage.POSTPROCESSED,
+                            session_data['id'],
+                            hash_postprocessed,
+                        ),
+                        controls=True,
+                        preload='none',
+                    ),
                 ]),
-                html.Td(
-                    html.Button('Download', id={'type': 'output-download-button', 'index': hash_postprocessed}),
-                    className='download-cell')
+                html.Td(html.Div(download_buttons, className='download-actions'), className='download-cell')
             ]),
             html.Tr([
                 html.Td('Inputs:', className='output-label'),
@@ -79,7 +94,7 @@ def prepare_postprocessed_display(cache, hash_postprocessed, session_data, highl
             ]),
         ], className='output-table-highlighted' if highlight else 'output-table'),
         html.Div(style={'height': '30px'}),  # todo: There's got to be a better way to add spacing
-        dcc.Download(id={'type': 'output-download', 'index': hash_postprocessed})
+        *downloads,
     ], className='centered')
     return display
 

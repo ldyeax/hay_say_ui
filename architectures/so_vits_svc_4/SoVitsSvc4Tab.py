@@ -40,6 +40,21 @@ class SoVitsSvc4Tab(AbstractTab):
     def meets_requirements(self, user_text, user_audio, selected_character):
         return user_audio is not None and selected_character is not None
 
+    def meets_all_requirements(self, user_text, user_audio, selected_character, option_values):
+        if not self.meets_requirements(user_text, user_audio, selected_character):
+            return False
+        try:
+            slice_length = float(option_values[3])
+            crossfade = float(option_values[4])
+            workers = int(option_values[9])
+        except (IndexError, TypeError, ValueError):
+            return False
+        return (
+            slice_length >= 0
+            and (slice_length == 0 or 0 <= crossfade <= slice_length)
+            and workers >= 0
+        )
+
     @property
     def options(self):
         return html.Table([
@@ -84,6 +99,11 @@ class SoVitsSvc4Tab(AbstractTab):
                     html.Td(dcc.Input(id=self.id+'-cross-fade-number', type='number', min=0, max=20, value="0", step='0.01')),
                 ])
             ], title="The cross fade overlap between voice slices, in seconds."),
+            html.Tr([
+                html.Td(html.Label('Slice Workers', htmlFor=self.input_ids[9]), className='option-label'),
+                html.Td(dcc.Input(id=self.input_ids[9], type='number', min=0, max=64, step=1, value=0,
+                                  disabled=True))
+            ], title='Maximum concurrent isolated model processes for slices. Zero selects the server default.'),
             html.Tr([
                 html.Td(html.Label('Character Similarity', htmlFor=self.input_ids[5]), className='option-label'),
                 html.Tr([
@@ -172,13 +192,14 @@ class SoVitsSvc4Tab(AbstractTab):
         @callback(
             Output(self.input_ids[4], 'disabled'),
             Output(self.id + '-cross-fade-number', 'disabled'),
+            Output(self.input_ids[9], 'disabled'),
             Input(self.input_ids[3], 'value')
         )
-        def disable_crossfade_length(slice_length):
+        def disable_slice_options(slice_length):
             if slice_length is None:
                 raise PreventUpdate
             disabled = float(slice_length) < 0.01
-            return disabled, disabled
+            return disabled, disabled, disabled
 
         @callback(
             Output(self.input_ids[8], 'value'),
@@ -201,12 +222,83 @@ class SoVitsSvc4Tab(AbstractTab):
                 self.id+'-character-likeness',
                 self.id+'-reduce-hoarseness',
                 self.id+'-apply-nsf-hifigan',
-                self.id+'-reduce-noise'
+                self.id+'-reduce-noise',
+                self.id+'-slice-workers'
                 ]
 
     @property
     def pitch_batch_key(self):
         return 'Pitch Shift'
+
+    @property
+    def supports_parallel_requests(self):
+        return True
+
+    @property
+    def supports_mixed_device_pitch_batch(self):
+        return True
+
+    @property
+    def serializes_device_requests(self):
+        return True
+
+    def mixed_device_caches_are_warm(self, runtime_state, options, cpu_device, gpu_device):
+        if not isinstance(runtime_state, dict) or cpu_device != '':
+            return False
+        character = options.get('Character') if isinstance(options, dict) else None
+        if not isinstance(character, str) or not character:
+            return False
+        character_dir = os.path.realpath(hsc.character_dir(self.id, character))
+        config_path = os.path.realpath(os.path.join(character_dir, 'config.json'))
+        try:
+            model_paths = sorted(
+                os.path.realpath(os.path.join(character_dir, name))
+                for name in os.listdir(character_dir)
+                if name.startswith('G_') and name.endswith('.pth')
+                and os.path.isfile(os.path.join(character_dir, name))
+            )
+        except OSError:
+            return False
+        if len(model_paths) != 1 or not os.path.isfile(config_path):
+            return False
+        try:
+            model_revision = self._file_revision(model_paths[0])
+            config_revision = self._file_revision(config_path)
+        except OSError:
+            return False
+
+        details = runtime_state.get('loaded_model_details')
+        if not isinstance(details, list):
+            return False
+        required_devices = {'cpu', f'cuda:{int(gpu_device)}'}
+        expected_enhance = bool(options.get('Apply nsf_hifigan'))
+        matched_devices = set()
+        for entry in details:
+            if not isinstance(entry, dict) or entry.get('character') != character:
+                continue
+            device = entry.get('device')
+            if (
+                isinstance(device, str)
+                and os.path.realpath(str(entry.get('model_path', ''))) == model_paths[0]
+                and os.path.realpath(str(entry.get('config_path', ''))) == config_path
+                and entry.get('model_revision') == model_revision
+                and entry.get('config_revision') == config_revision
+                and bool(entry.get('enhance')) == expected_enhance
+                and int(entry.get('workers', 0)) > 0
+                and device in required_devices
+            ):
+                matched_devices.add(device)
+        return matched_devices == required_devices
+
+    @staticmethod
+    def _file_revision(path):
+        stat = os.stat(path)
+        return {
+            'device': int(stat.st_dev),
+            'inode': int(stat.st_ino),
+            'size': int(stat.st_size),
+            'modified_ns': int(stat.st_mtime_ns),
+        }
 
     def construct_input_dict(self, session_data, *args):
         return {
@@ -217,9 +309,10 @@ class SoVitsSvc4Tab(AbstractTab):
             # list, []. The expression "True if args[x] else False" maps both None and [] to False and [''] to True.
             'Predict Pitch': True if args[2] else False,
             'Slice Length': float(args[3]),
-            'Cross-Fade Length': float(args[4]),
+            'Cross-Fade Length': float(args[4]) if float(args[3]) > 0 else 0.0,
             'Character Likeness': float(args[5]),
             'Reduce Hoarseness': True if args[6] else False,
             'Apply nsf_hifigan': True if args[7] else False,
-            'Noise Scale': float(args[8])
+            'Noise Scale': float(args[8]),
+            'Slice Workers': int(args[9]) if float(args[3]) > 0 else 0
         }

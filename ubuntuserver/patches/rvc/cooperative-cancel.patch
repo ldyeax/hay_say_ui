@@ -1,0 +1,63 @@
+--- a/infer/modules/vc/modules.py
++++ b/infer/modules/vc/modules.py
+@@ -140,6 +140,7 @@
+         resample_sr,
+         rms_mix_rate,
+         protect,
++        cancel_check=None,
+     ):
+         if input_audio_path is None:
+             return "You need to upload an audio", None
+@@ -187,6 +188,7 @@
+                 self.version,
+                 protect,
+                 f0_file,
++                cancel_check,
+             )
+             if self.tgt_sr != resample_sr >= 16000:
+                 tgt_sr = resample_sr
+--- a/infer/modules/vc/pipeline.py
++++ b/infer/modules/vc/pipeline.py
+@@ -298,7 +298,10 @@
+         version,
+         protect,
+         f0_file=None,
++        cancel_check=None,
+     ):
++        if cancel_check is not None:
++            cancel_check()
+         if (
+             file_index != ""
+             # and file_big_npy != ""
+@@ -366,9 +369,13 @@
+                 pitchf = pitchf.astype(np.float32)
+             pitch = torch.tensor(pitch, device=self.device).unsqueeze(0).long()
+             pitchf = torch.tensor(pitchf, device=self.device).unsqueeze(0).float()
++        if cancel_check is not None:
++            cancel_check()
+         t2 = ttime()
+         times[1] += t2 - t1
+         for t in opt_ts:
++            if cancel_check is not None:
++                cancel_check()
+             t = t // self.window * self.window
+             if if_f0 == 1:
+                 audio_opt.append(
+@@ -405,6 +412,8 @@
+                     )[self.t_pad_tgt : -self.t_pad_tgt]
+                 )
+             s = t
++        if cancel_check is not None:
++            cancel_check()
+         if if_f0 == 1:
+             audio_opt.append(
+                 self.vc(
+@@ -439,6 +448,8 @@
+                     protect,
+                 )[self.t_pad_tgt : -self.t_pad_tgt]
+             )
++        if cancel_check is not None:
++            cancel_check()
+         audio_opt = np.concatenate(audio_opt)
+         if rms_mix_rate != 1:
+             audio_opt = change_rms(audio, 16000, audio_opt, tgt_sr, rms_mix_rate)

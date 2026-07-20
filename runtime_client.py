@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import fcntl
+import hashlib
 import re
 import time
 from contextlib import contextmanager
@@ -51,8 +52,33 @@ def service_endpoint(runtime_id: str, port: int) -> tuple[str, int]:
     return os.environ.get(prefix + "_HOST", default_host), int(os.environ.get(prefix + "_PORT", port))
 
 
+def service_runtime_state(host: str, port: int, timeout: float = 0.5) -> dict[str, Any] | None:
+    """Best-effort model telemetry used for scheduling decisions."""
+    try:
+        response = requests.get(f"http://{host}:{int(port)}/runtime", timeout=timeout)
+        if not response.ok:
+            return None
+        body = response.json()
+    except (requests.RequestException, TypeError, ValueError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def _acquire_generation_file_lock(lock_file, cancel_check=None) -> None:
+    if cancel_check is None:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        return
+    while True:
+        cancel_check()
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            time.sleep(0.05)
+
+
 @contextmanager
-def generation_lock(runtime_id: str):
+def generation_lock(runtime_id: str, cancel_check=None):
     """Serialize legacy service requests across native Celery processes."""
     if not RUNTIME_ID.fullmatch(runtime_id):
         raise ValueError(f"Invalid runtime id: {runtime_id}")
@@ -62,11 +88,44 @@ def generation_lock(runtime_id: str):
     path = lock_root / f"{runtime_id}.generation.lock"
     with path.open("a+") as lock_file:
         os.chmod(path, 0o600)
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        _acquire_generation_file_lock(lock_file, cancel_check)
         try:
             yield
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def output_locks(runtime_id: str, session_id: object, output_ids, cancel_check=None):
+    """Prevent duplicate work for the same cache outputs without serializing a runtime."""
+    if not RUNTIME_ID.fullmatch(runtime_id):
+        raise ValueError(f"Invalid runtime id: {runtime_id}")
+    default_root = Path(os.environ.get("HAY_SAY_HOME", Path.home() / "hay_say")) / ".locks"
+    lock_root = Path(os.environ.get("HAY_SAY_REQUEST_LOCK_DIR", default_root)).expanduser()
+    output_root = lock_root / "outputs" / runtime_id
+    output_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    scope = repr(session_id).encode("utf-8", errors="surrogateescape")
+    paths = []
+    for output_id in sorted({str(value) for value in output_ids}):
+        digest = hashlib.sha256(scope + b"\0" + output_id.encode("utf-8", errors="surrogateescape")).hexdigest()
+        paths.append(output_root / f"{digest}.lock")
+
+    lock_files = []
+    try:
+        for path in paths:
+            lock_file = path.open("a+")
+            os.chmod(path, 0o600)
+            try:
+                _acquire_generation_file_lock(lock_file, cancel_check)
+            except Exception:
+                lock_file.close()
+                raise
+            lock_files.append(lock_file)
+        yield
+    finally:
+        for lock_file in reversed(lock_files):
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
 
 
 def _request(method: str, path: str, *, timeout: float = 3.0) -> Any:
@@ -106,6 +165,35 @@ def runtime_action(runtime_id: str, action: str) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise RuntimeManagerError("Runtime manager returned an invalid action response")
     return body
+
+
+def cancel_generation(runtime_id: str, request_ids) -> bool:
+    """Best-effort cooperative cancellation that never stops the model service."""
+    if not RUNTIME_ID.fullmatch(runtime_id):
+        raise ValueError(f"Invalid runtime id: {runtime_id}")
+    normalized_ids = sorted({str(value) for value in request_ids if value})
+    if not normalized_ids:
+        return False
+    status = runtime_status(runtime_id)
+    port = status.get("port")
+    if isinstance(port, bool) or not isinstance(port, int):
+        raise RuntimeManagerError(f"Runtime manager did not report a port for {runtime_id}")
+    host, resolved_port = service_endpoint(runtime_id, port)
+    try:
+        response = requests.post(
+            f"http://{host}:{resolved_port}/cancel",
+            json={"Request IDs": normalized_ids},
+            timeout=2.0,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeManagerUnavailable(f"{runtime_id} cancellation endpoint is unavailable: {exc}") from exc
+    if response.status_code in {404, 405, 501}:
+        return False
+    if not response.ok:
+        raise RuntimeManagerError(
+            f"{runtime_id} cancellation endpoint returned HTTP {response.status_code}"
+        )
+    return True
 
 
 def service_is_healthy(runtime_id: str, port: int, timeout: float = 1.0) -> bool:

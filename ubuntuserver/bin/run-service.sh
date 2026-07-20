@@ -75,7 +75,8 @@ case "$COMPONENT" in
 			--workdir "$HAY_SAY_UI" \
 			-A celery_generate_cpu:celery_app worker \
 			--loglevel "${HAY_SAY_LOG_LEVEL:-INFO}" \
-			--concurrency "${HAY_SAY_CPU_CONCURRENCY:-1}" \
+			--concurrency "${HAY_SAY_CPU_CONCURRENCY:-4}" \
+			--prefetch-multiplier 1 \
 			--hostname "hay-say-cpu@$(hostname)" \
 			--cache_implementation file \
 			"${architecture_arguments[@]}"
@@ -86,6 +87,7 @@ case "$COMPONENT" in
 			-A celery_generate_gpu:celery_app worker \
 			--loglevel "${HAY_SAY_LOG_LEVEL:-INFO}" \
 			--concurrency "${HAY_SAY_GPU_CONCURRENCY:-1}" \
+			--prefetch-multiplier 1 \
 			--hostname "hay-say-gpu@$(hostname)" \
 			--cache_implementation file \
 			"${architecture_arguments[@]}"

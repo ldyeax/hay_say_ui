@@ -165,6 +165,9 @@ option {
     border: none;
     width: 100%;
     height: 100%;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+    padding: 6px 8px;
     color: #fff;
     background-color: rgba(0,0,0,0)
 }
@@ -188,10 +191,17 @@ option {
     height: 60px;
 }
 
+.architecture-tab-strip {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
 .architecture-info{
     vertical-align: top;
     padding-top: 15px;
     width: 40%;
+    overflow-wrap: anywhere;
 }
 
 .box-div{
@@ -215,6 +225,36 @@ option {
 
 .download-cell{
     text-align: left;
+}
+
+.download-actions{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.output-controls {
+    width: 100%;
+}
+
+.output-delete-cell {
+    width: 70%;
+}
+
+.output-format-control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.output-format-control label {
+    margin: 0;
+}
+
+.file-format-dropdown {
+    width: auto;
+    min-width: 88px;
 }
 
 button{
@@ -325,13 +365,80 @@ button{
         width: calc(100% - 20px);
     }
 
-    .architecture-info {
+    .tab-table-header {
+        width: max-content;
+        min-width: 100%;
+        table-layout: auto;
+    }
+
+    .tab-table-header td {
+        width: 112px;
+        min-width: 112px;
+    }
+
+    .tab-table-header .tab-button {
+        min-height: 60px;
+    }
+
+    .box-div {
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+
+    .tab-table {
+        height: auto;
+        border-spacing: 0;
+    }
+
+    .tab-table tr[id]:not([hidden]) {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tab-table tr[id]:not([hidden]) > td {
         display: block;
         width: 100%;
+        max-width: 100%;
+    }
+
+    .architecture-info {
+        padding: 16px 0 8px;
+    }
+
+    .architecture-info + td {
+        padding: 0;
+    }
+
+    .tab-table .spaced-table {
+        table-layout: fixed;
+        border-spacing: 8px 12px;
+    }
+
+    .option-dropdown,
+    .file-format-dropdown {
+        max-width: 100%;
     }
 
     .pitch-batch-controls {
         grid-template-columns: 1fr;
+    }
+
+    .output-controls,
+    .output-controls > tbody,
+    .output-controls-row,
+    .output-controls-row > td {
+        display: block;
+        width: 100%;
+    }
+
+    .output-format-cell {
+        margin-top: 12px;
+    }
+
+    .output-format-control {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(88px, 130px);
+        text-align: right;
     }
 }
 
@@ -341,9 +448,95 @@ button:disabled{
 }
 
 .generate-button{
+    display: block;
     font-family: Equestria;
     font-size: 36px;
-    margin: 0px;
+    margin: 0 auto;
+}
+
+.generation-status {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    min-height: 28px;
+    width: min(620px, 100%);
+    margin: 0 auto;
+}
+
+.generation-progress {
+    display: grid;
+    gap: 8px;
+    width: 100%;
+}
+
+.generation-progress-row {
+    display: grid;
+    gap: 4px;
+    width: 100%;
+}
+
+.generation-progress-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    font-size: 14px;
+}
+
+.generation-progress-label {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    text-align: left;
+}
+
+.generation-progress-counter {
+    color: #c8d0d8;
+    flex: none;
+    font-variant-numeric: tabular-nums;
+}
+
+.generation-progress-bar {
+    appearance: none;
+    width: 100%;
+    height: 12px;
+    overflow: hidden;
+    border: 1px solid #7d8996;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.generation-progress-bar::-webkit-progress-bar {
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.generation-progress-bar::-webkit-progress-value {
+    background: #80a6d6;
+}
+
+.generation-progress-bar::-moz-progress-bar {
+    background: #80a6d6;
+}
+
+.generation-progress-running .generation-progress-bar:not([value]),
+.generation-progress-cancelling .generation-progress-bar:not([value]) {
+    background: #80a6d6;
+    animation: generation-progress-pulse 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes generation-progress-pulse {
+    from { opacity: 0.45; }
+    to { opacity: 1; }
+}
+
+.generation-progress-completed .generation-progress-bar::-webkit-progress-value {
+    background: #77b989;
+}
+
+.generation-progress-completed .generation-progress-bar::-moz-progress-bar {
+    background: #77b989;
+}
+
+.cancel-generation-button {
+    min-width: 92px;
 }
 
 .label{
@@ -363,6 +556,7 @@ button:disabled{
 
 .no-padding{
     padding: 0px;
+    text-align: center;
 }
 
 #banner-announcement{

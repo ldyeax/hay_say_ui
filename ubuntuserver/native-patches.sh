@@ -74,12 +74,12 @@ apply_patch_set() {
 
 patch_runtime_id() {
 	case "$1" in
-		controllable_talknet_server) printf 'controllable_talknet\n' ;;
-		so_vits_svc_4_server) printf 'so_vits_svc_4\n' ;;
-		so_vits_svc_5_server) printf 'so_vits_svc_5\n' ;;
+		controllable_talknet|controllable_talknet_server) printf 'controllable_talknet\n' ;;
+		so_vits_svc_4|so_vits_svc_4_dot_1_stable|so_vits_svc_4_server) printf 'so_vits_svc_4\n' ;;
+		so_vits_svc_5_v1|so_vits_svc_5_v2|so_vits_svc_5_server) printf 'so_vits_svc_5\n' ;;
 		rvc|rvc_server) printf 'rvc\n' ;;
 		styletts_2|styletts_2_server) printf 'styletts_2\n' ;;
-		gpt_so_vits_server) printf 'gpt_so_vits\n' ;;
+		gpt_so_vits|gpt_so_vits_server) printf 'gpt_so_vits\n' ;;
 		*) return 1 ;;
 	esac
 }
@@ -87,16 +87,16 @@ patch_runtime_id() {
 apply_native_patches() {
 	local server target patch_dir patch_file patch_digest runtime_id provenance_file provenance_digest
 	local state_dir base_dir saved_patch_digest saved_provenance_digest
-	local index paths_changed target_has_current_patch
+	local index managed_path paths_changed target_has_current_patch
 	local -a servers=(
-		controllable_talknet_server
-		so_vits_svc_4_server
-		so_vits_svc_5_server
+		controllable_talknet
+		so_vits_svc_4
+		so_vits_svc_4_dot_1_stable
+		so_vits_svc_5_v1
+		so_vits_svc_5_v2
 		rvc
-		rvc_server
 		styletts_2
-		styletts_2_server
-		gpt_so_vits_server
+		gpt_so_vits
 	)
 	local -a patches=() current_paths=() saved_paths=() managed_paths=()
 	for server in "${servers[@]}"; do
@@ -104,23 +104,25 @@ apply_native_patches() {
 		patch_dir="$REPO_CONTENT_ROOT/ubuntuserver/patches/$server"
 		[[ -d "$target" ]] || continue
 		[[ -d "$patch_dir" ]] || die "native patch directory is missing: $patch_dir"
-		if [[ "$server" == rvc ]] && grep -q $'\r$' "$target/infer/lib/audio.py"; then
-			# The published RVC image stores this source as CRLF. Normalize the
-			# maintained patch target so GNU patch behaves consistently.
-			run sed -i 's/\r$//' "$target/infer/lib/audio.py"
-		fi
 		patches=("$patch_dir"/*.patch)
 		[[ -e "${patches[0]}" ]] || die "native patch directory is empty: $patch_dir"
 		for patch_file in "${patches[@]}"; do
 			[[ -r "$patch_file" ]] || die "native patch is unreadable: $patch_file"
+		done
+		mapfile -t current_paths < <(patch_paths "${patches[@]}")
+		((${#current_paths[@]})) || die "native patch set has no file paths: $patch_dir"
+		for managed_path in "${current_paths[@]}"; do
+			if [[ -f "$target/$managed_path" ]] && grep -q $'\r$' "$target/$managed_path"; then
+				# Some published images mix CRLF and LF sources. Patches are kept
+				# canonical and reconciliation normalizes only maintained paths.
+				run sed -i 's/\r$//' "$target/$managed_path"
+			fi
 		done
 		if ((DRY_RUN)); then
 			printf ' + reconcile maintained patch set in %q from %q\n' "$target" "$patch_dir"
 			continue
 		fi
 
-		mapfile -t current_paths < <(patch_paths "${patches[@]}")
-		((${#current_paths[@]})) || die "native patch set has no file paths: $patch_dir"
 		patch_digest=$(patch_set_digest "${patches[@]}")
 		runtime_id=$(patch_runtime_id "$server") || die "patch runtime mapping is missing: $server"
 		provenance_file="$DATA_ROOT/provenance/$runtime_id.provenance"

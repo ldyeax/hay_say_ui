@@ -16,6 +16,12 @@ USE_REFERENCE_AUDIO = "Use Reference Audio"
 
 class GPTSoVITSTab(AbstractTab):
     @property
+    def supports_parallel_requests(self):
+        # The native wrapper gives every request its own temporary directory and
+        # inference subprocess, so it has no shared input/output workspace.
+        return True
+
+    @property
     def cache_generated_output(self):
         return False
 

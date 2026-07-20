@@ -2,11 +2,16 @@ import click
 from billiard.process import current_process
 from celery import Celery, bootsteps
 from click import Option
-from dash import Input, Output, State, callback, CeleryManager
+from dash import Input, Output, callback, CeleryManager
+from dash.exceptions import PreventUpdate
 
 import hay_say_common as hsc
 import plotly_celery_common as pcc
-from generator import generate_and_prepare_postprocessed_display
+from generator import (
+    GenerationCancelled,
+    GenerationRequestUnavailable,
+    generate_and_prepare_postprocessed_display,
+)
 from gpu_selection import gpu_id_for_worker
 from celery_config import redis_url
 
@@ -34,43 +39,24 @@ class CacheSelection(bootsteps.Step):
         selected_architectures = pcc.construct_architecture_tabs(include_architecture, cache_implementation)
 
         @callback(
-            output=[Output('message', 'children', allow_duplicate=True),
-                    Output('generate-button-gpu', 'children')],  # To activate the spinner
-            inputs=[Input('generate-button-gpu', 'n_clicks'),
-                    State('session', 'data'),
-                    State('text-input', 'value'),
-                    State('file-dropdown', 'value'),
-                    State('semitone-pitch', 'value'),
-                    State('debug-pitch', 'value'),
-                    State('reduce-noise', 'value'),
-                    State('crop-silence', 'value'),
-                    State('reduce-metallic-sound', 'value'),
-                    State('auto-tune-output', 'value'),
-                    State('adjust-output-speed', 'value'),
-                    State('pitch-batch-enabled', 'value'),
-                    State('pitch-batch-values', 'value')] +
-                   [State(tab.id, 'hidden') for tab in selected_architectures] +
-                   [State(item, 'value') for sublist in   # Add every architecture's inputs as States to the callback
-                    [tab.input_ids for tab in selected_architectures]
-                    for item in sublist],
-            running=[(Output('generate-message', 'hidden'), False, True)],
-            progress=Output('generate-message', 'children'),
-            progress_default='Waiting in queue...',
+            output=Output('generation-result-signal', 'data', allow_duplicate=True),
+            inputs=[Input('gpu-generation-request', 'data')],
             background=True,
             manager=background_callback_manager,
-            prevent_initial_call=True
+            prevent_initial_call='initial_duplicate',
         )
-        def generate_with_gpu(set_progress, clicks, session_data, user_text, selected_file, semitone_pitch, debug_pitch,
-                              reduce_noise, crop_silence, reduce_metallic_noise, auto_tune_output,
-                              output_speed_adjustment, pitch_batch_enabled, pitch_batch_values, *args):
+        def generate_with_gpu(request_data):
+            if not isinstance(request_data, dict):
+                raise PreventUpdate
             gpu_id = gpu_id_for_worker(current_process().index)
             message = 'generating on GPU #' + str(gpu_id) + '...'
-            return generate_and_prepare_postprocessed_display(clicks, set_progress, message, cache_implementation,
-                                                              gpu_id, session_data, selected_architectures, user_text,
-                                                              selected_file, semitone_pitch, debug_pitch, reduce_noise,
-                                                              crop_silence, reduce_metallic_noise, auto_tune_output,
-                                                              output_speed_adjustment, pitch_batch_enabled,
-                                                              pitch_batch_values, args)
+            try:
+                result, _button_label = generate_and_prepare_postprocessed_display(
+                    request_data, message, cache_implementation, gpu_id, selected_architectures,
+                )
+                return result
+            except (GenerationCancelled, GenerationRequestUnavailable):
+                raise PreventUpdate
 
 
 celery_app.steps['worker'].add(CacheSelection)

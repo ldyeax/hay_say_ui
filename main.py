@@ -5,18 +5,36 @@ import json
 import os
 import re
 import tempfile
+import threading
+import time
 import uuid
 
 import dash_bootstrap_components as dbc
 import soundfile
-from dash import Dash, html, dcc, Input, Output, State, ctx, callback, MATCH, no_update
+from dash import (
+    Dash,
+    html,
+    dcc,
+    Input,
+    Output,
+    State,
+    ctx,
+    callback,
+    clientside_callback,
+    MATCH,
+    no_update,
+)
 from dash.exceptions import PreventUpdate
 from hay_say_common.cache import Stage
 
 import hay_say_common as hsc
+import cache_media
+import output_download
 import plotly_celery_common as pcc
 import runtime_client
+import generation_jobs
 from deletion_scheduler import register_cache_cleanup_callback
+from postprocessed_display import prepare_postprocessed_display
 
 # todo: so-vits output is much louder than controllable talknet. Should the output volume be equalized?
 
@@ -25,12 +43,302 @@ SHOW_OUTPUT_OPTIONS_LABEL = 'Show post-processing options'
 TAB_BUTTON_PREFIX = '-tab-button'
 TAB_CELL_SUFFIX = '-tab-cell'
 ANNOUNCEMENT_CHECK_INTERVAL = 60000  # milliseconds
+CLIENT_ID_PATTERN = re.compile(r'^[a-f0-9]{32}$')
+CANCEL_RETRY_DELAYS = (0.5, 1.0, 2.0, 4.0)
+_cancel_retry_lock = threading.Lock()
+_cancel_retries = set()
+
+
+def tab_visibility_and_classes(triggered_id, available_tabs):
+    """Select the first architecture when the page has no tab trigger yet."""
+    button_ids = [tab.id + TAB_BUTTON_PREFIX for tab in available_tabs]
+    selected_button_id = triggered_id if triggered_id in button_ids else (
+        button_ids[0] if button_ids else None
+    )
+    hidden_states = [button_id != selected_button_id for button_id in button_ids]
+    tab_classes = [
+        'tab-cell-selected' if button_id == selected_button_id else 'tab-cell'
+        for button_id in button_ids
+    ]
+    return hidden_states + tab_classes
+
+
+def normalize_session_data(existing_data, enable_session_caches):
+    """Preserve the browser identity that connects a refreshed page to its job."""
+    existing_data = existing_data if isinstance(existing_data, dict) else {}
+    client_id = existing_data.get('client_id')
+    if not isinstance(client_id, str) or CLIENT_ID_PATTERN.fullmatch(client_id) is None:
+        client_id = uuid.uuid4().hex
+    session_id = existing_data.get('id')
+    if enable_session_caches and not isinstance(session_id, str):
+        session_id = uuid.uuid4().hex
+    if not enable_session_caches:
+        session_id = None
+    return {'id': session_id, 'client_id': client_id}
+
+
+def browser_job(session_data):
+    client_id = session_data.get('client_id') if isinstance(session_data, dict) else None
+    if not isinstance(client_id, str) or CLIENT_ID_PATTERN.fullmatch(client_id) is None:
+        return None
+    return generation_jobs.get(client_id)
+
+
+def create_generation_request(queue, session_data, selected_tab, snapshot):
+    """Persist a job before returning the self-contained Celery trigger."""
+    if not isinstance(session_data, dict) or selected_tab is None or not isinstance(snapshot, dict):
+        raise PreventUpdate
+    existing = browser_job(session_data)
+    if generation_jobs.active(existing):
+        raise PreventUpdate
+    client_id = session_data.get('client_id')
+    request_id = uuid.uuid4().hex
+    request_data = {
+        'request_id': request_id,
+        'client_id': client_id,
+        'session_id': session_data.get('id'),
+        'snapshot': snapshot,
+    }
+    try:
+        queued = generation_jobs.create_queued(
+            client_id,
+            request_id,
+            selected_tab.id,
+            queue,
+            'Waiting in queue...',
+            request_data=request_data,
+        )
+    except generation_jobs.GenerationJobConflict:
+        # CPU and GPU buttons can race before the next poll disables both.
+        raise PreventUpdate from None
+    return queued['request_data']
+
+
+def recover_generation_triggers(state, cpu_request, gpu_request):
+    """Recover a queued request whose foreground callback response was lost."""
+    if not isinstance(state, dict) or state.get('status') != 'queued':
+        return no_update, no_update
+    request_data = state.get('request_data')
+    if (
+        not isinstance(request_data, dict)
+        or request_data.get('request_id') != state.get('request_id')
+        or request_data.get('client_id') != state.get('client_id')
+    ):
+        return no_update, no_update
+    queue = state.get('queue')
+    current = cpu_request if queue == 'cpu' else gpu_request if queue == 'gpu' else None
+    if isinstance(current, dict) and current.get('request_id') == state.get('request_id'):
+        return no_update, no_update
+    if queue == 'cpu':
+        return request_data, no_update
+    if queue == 'gpu':
+        return no_update, request_data
+    return no_update, no_update
+
+
+def generation_job_view(state):
+    """Return the compact lifecycle state needed by browser controls."""
+    if not isinstance(state, dict):
+        return None
+    return {
+        key: state.get(key)
+        for key in (
+            'request_id',
+            'runtime_id',
+            'status',
+            'message',
+            'progress',
+            'operations',
+            'updated_at',
+        )
+    }
+
+
+def _progress_number(value):
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def generation_progress_components(state):
+    """Build small progress rows without placing audio or request data in Dash state."""
+    if not isinstance(state, dict):
+        return []
+    operations = state.get('operations')
+    rows = []
+    if isinstance(operations, dict):
+        for operation_id, operation in sorted(operations.items()):
+            if not isinstance(operation, dict):
+                continue
+            label = operation.get('label') or operation_id
+            device = operation.get('device')
+            if device:
+                label = f'{label} - {device}'
+            current = operation.get('current')
+            total = operation.get('total')
+            status = operation.get('status') or 'pending'
+            has_fraction = current is not None and total is not None
+            indeterminate = status in {'running', 'cancelling'} and (
+                not has_fraction or current == 0
+            )
+            if indeterminate:
+                counter = 'Stopping' if status == 'cancelling' else 'Running'
+            elif status == 'pending' and has_fraction and current == 0:
+                counter = 'Waiting'
+            elif has_fraction:
+                counter = f'{_progress_number(current)} / {_progress_number(total)}'
+            else:
+                counter = status.capitalize()
+            progress_options = {'max': total or 1, 'className': 'generation-progress-bar'}
+            if has_fraction and not indeterminate:
+                progress_options['value'] = current
+            rows.append(html.Div([
+                html.Div([
+                    html.Span(label, className='generation-progress-label'),
+                    html.Span(counter, className='generation-progress-counter'),
+                ], className='generation-progress-header'),
+                html.Progress(**progress_options),
+            ], className=f'generation-progress-row generation-progress-{status}'))
+    if rows:
+        return rows
+
+    progress = state.get('progress')
+    if not isinstance(progress, dict):
+        return []
+    current = progress.get('current')
+    total = progress.get('total')
+    if current is None or total is None:
+        return []
+    return [html.Div([
+        html.Div([
+            html.Span('Overall', className='generation-progress-label'),
+            html.Span(
+                f'{_progress_number(current)} / {_progress_number(total)}',
+                className='generation-progress-counter',
+            ),
+        ], className='generation-progress-header'),
+        html.Progress(value=current, max=total, className='generation-progress-bar'),
+    ], className='generation-progress-row generation-progress-running')]
+
+
+def generation_controls_view(state):
+    """Render status controls and make job activity the sole poll switch."""
+    active = generation_jobs.active(state)
+    progress_rows = generation_progress_components(state) if active else []
+    progress_hidden = not progress_rows
+    if active:
+        message = state.get('message') or 'Generation is running...'
+        return message, False, False, False, progress_rows, progress_hidden, False
+    if isinstance(state, dict) and state.get('status') == 'failed':
+        message = state.get('message') or 'Generation failed.'
+        return message, False, True, True, [], True, True
+    if isinstance(state, dict) and state.get('status') == 'cancelled':
+        return 'Generation stopped.', False, True, True, [], True, True
+    return '', True, True, True, [], True, True
+
+
+def generation_trigger_updates(state, cpu_request, gpu_request):
+    """Recover queued work, then clear persisted triggers once it is terminal."""
+    if generation_jobs.active(state):
+        return recover_generation_triggers(state, cpu_request, gpu_request)
+    return (
+        None if cpu_request is not None else no_update,
+        None if gpu_request is not None else no_update,
+    )
+
+
+def _retry_runtime_cancel(client_id, runtime_id, request_id, runtime_cancel, *,
+                          delays=CANCEL_RETRY_DELAYS, sleeper=time.sleep):
+    """Retry only the cooperative endpoint while the same request is cancelling."""
+    for delay in delays:
+        sleeper(delay)
+        state = generation_jobs.get(client_id)
+        if (
+            not isinstance(state, dict)
+            or state.get('request_id') != request_id
+            or state.get('status') != 'cancelling'
+        ):
+            return False
+        try:
+            runtime_cancel(runtime_id, [request_id])
+        except runtime_client.RuntimeManagerError as error:
+            print(f'Could not retry {runtime_id} cancellation endpoint: {error}', flush=True)
+            continue
+        return True
+    return False
+
+
+def _schedule_runtime_cancel_retry(client_id, runtime_id, request_id, runtime_cancel):
+    key = (client_id, request_id)
+    with _cancel_retry_lock:
+        if key in _cancel_retries:
+            return
+        _cancel_retries.add(key)
+
+    def retry():
+        try:
+            _retry_runtime_cancel(client_id, runtime_id, request_id, runtime_cancel)
+        finally:
+            with _cancel_retry_lock:
+                _cancel_retries.discard(key)
+
+    threading.Thread(
+        target=retry,
+        name=f'cancel-retry-{request_id[:12]}',
+        daemon=True,
+    ).start()
+
+
+def cancel_browser_generation(session_data, runtime_cancel=None, celery_apps=None):
+    """Cancel one job cooperatively while preserving the warm model runtime."""
+    state = browser_job(session_data)
+    if not generation_jobs.active(state):
+        return None
+    affected_state = generation_jobs.request_cancel(state['client_id'], state['request_id'])
+    if not affected_state:
+        return None
+    runtime_id = affected_state['runtime_id']
+    runtime_cancel = runtime_cancel or runtime_client.cancel_generation
+    try:
+        runtime_cancel(runtime_id, [affected_state['request_id']])
+    except runtime_client.RuntimeManagerError as error:
+        print(f'Could not signal {runtime_id} cancellation endpoint: {error}', flush=True)
+        _schedule_runtime_cancel_retry(
+            affected_state['client_id'], runtime_id, affected_state['request_id'], runtime_cancel
+        )
+
+    if celery_apps is None:
+        from celery_generate_cpu import celery_app as cpu_celery_app
+        from celery_generate_gpu import celery_app as gpu_celery_app
+        celery_apps = {'cpu': cpu_celery_app, 'gpu': gpu_celery_app}
+
+    task_id = affected_state.get('task_id')
+    celery_app = celery_apps.get(affected_state.get('queue'))
+    if task_id and celery_app is not None:
+        try:
+            celery_app.control.revoke(task_id, terminate=False)
+        except Exception as error:
+            # The durable cancellation marker remains authoritative.
+            print(f'Could not revoke generation task {task_id}: {error}', flush=True)
+    else:
+        # A task that never started cannot observe the durable marker itself.
+        generation_jobs.mark_cancelled(affected_state['client_id'], affected_state['request_id'])
+    return {'request_id': affected_state['request_id'], 'runtime_id': runtime_id}
+
 
 def construct_main_interface(tab_buttons, tabs_contents, enable_session_caches):
     return [
         html.Div([
             html.Div(id='dummy'),
-            dcc.Store(id='session', storage_type='memory', data={'id': None}),
+            dcc.Store(id='session', storage_type='session', data={'id': None, 'client_id': None}),
+            dcc.Store(id='cpu-generation-request', storage_type='session'),
+            dcc.Store(id='gpu-generation-request', storage_type='session'),
+            dcc.Store(id='generation-result-signal', storage_type='memory'),
+            dcc.Store(id='generation-stop-signal', storage_type='memory'),
+            dcc.Store(id='generation-render-signature', storage_type='memory'),
+            dcc.Store(id='generation-job-state', storage_type='session'),
+            dcc.Store(id='generation-polled-job-state', storage_type='memory'),
+            dcc.Interval(id='generation-poll', interval=1000, n_intervals=0),
             dcc.Interval(interval=ANNOUNCEMENT_CHECK_INTERVAL, id='announcement-checker'),
             html.Div(
                 dcc.Markdown('Banner Announcements will appear here', id='banner-announcement'),
@@ -65,7 +373,13 @@ def construct_main_interface(tab_buttons, tabs_contents, enable_session_caches):
                     ),
                     html.Tr(
                         html.Td(
-                            html.Div(html.Audio(src=None, controls=True, id='input-playback', hidden=True))
+                            html.Div(html.Audio(
+                                src=None,
+                                controls=True,
+                                preload='none',
+                                id='input-playback',
+                                hidden=True,
+                            ))
                         )
                     )],
                     className='spaced-table'
@@ -110,7 +424,7 @@ def construct_main_interface(tab_buttons, tabs_contents, enable_session_caches):
                 html.Tr(
                     html.Td(
                         html.Div(
-                            html.Audio(src=None, controls=True, id='preprocess_playback'),
+                            html.Audio(src=None, controls=True, preload='none', id='preprocess_playback'),
                             className='centered'),
                         colSpan=2
                     ), hidden=True
@@ -120,8 +434,11 @@ def construct_main_interface(tab_buttons, tabs_contents, enable_session_caches):
             html.Hr(),
             html.H2('AI Architecture'),
             html.P("Now pick an AI architecture and tweak its settings to your liking:"),
-            html.Table(
-                html.Tr(tab_buttons), className='tab-table-header'
+            html.Div(
+                html.Table(
+                    html.Tr(tab_buttons), className='tab-table-header'
+                ),
+                className='architecture-tab-strip',
             ),
             html.Div([
                 html.Table(
@@ -192,25 +509,28 @@ def construct_main_interface(tab_buttons, tabs_contents, enable_session_caches):
                     ),
                     html.Tr(
                         html.Td(
-                            dcc.Loading(
-                                html.Button('Generate!', id='generate-button-gpu', className='generate-button'),
-                                type='default'  # circle, graph, cube, circle, dot, default
-                            ),
+                            html.Button('Generate!', id='generate-button-gpu', className='generate-button'),
                             className='no-padding'
                         ),
                     ),
                     html.Tr(
                         html.Td(
-                            dcc.Loading(
-                                html.Button('Generate!', id='generate-button-cpu', className='generate-button'),
-                                type='default'  # circle, graph, cube, circle, dot, default
-                            ),
+                            html.Button('Generate!', id='generate-button-cpu', className='generate-button'),
                             className='no-padding'
                         ),
                     ),
                     html.Tr(
                         html.Td(
-                            html.Span('Waiting in queue...', id='generate-message', hidden=True),
+                            html.Div([
+                                html.Span('Waiting in queue...', id='generate-message', hidden=True),
+                                html.Div(
+                                    id='generation-progress',
+                                    className='generation-progress',
+                                    hidden=True,
+                                ),
+                                html.Button('Stop', id='cancel-generation', hidden=True,
+                                            className='cancel-generation-button'),
+                            ], className='generation-status'),
                             className='centered'
                         ),
                     )],
@@ -223,17 +543,20 @@ def construct_main_interface(tab_buttons, tabs_contents, enable_session_caches):
             html.Table(
                 html.Tr([
                     # todo: hide this delete button if there's nothing to delete?
-                    html.Td(html.Button('Delete all generated audio', id='delete-postprocessed'), style={"width": "70%"}),
                     html.Td(
-                        html.Tr([
-                            html.Td(html.Label("Download file format:", htmlFor='output-file-format')),
-                            html.Td(dbc.Select(options=sorted([item.lower() for item in soundfile.available_formats().keys() if item.lower() != 'raw']), value='flac', id='output-file-format',
-                                               className='file-format-dropdown')),
-                        ]),
-                        style={"text-align": "right"}
+                        html.Button('Delete all generated audio', id='delete-postprocessed'),
+                        className='output-delete-cell',
+                    ),
+                    html.Td(
+                        html.Div([
+                            html.Label("Download file format:", htmlFor='output-file-format'),
+                            dbc.Select(options=sorted([item.lower() for item in soundfile.available_formats().keys() if item.lower() != 'raw']), value='flac', id='output-file-format',
+                                       className='file-format-dropdown'),
+                        ], className='output-format-control'),
+                        className='output-format-cell',
                     )
-                ]),
-                style={"width": "100%"}
+                ], className='output-controls-row'),
+                className='output-controls',
             ),
             html.Div(id='message'),
         ], id='hay-say-outer-div', className='outer-div')
@@ -279,11 +602,91 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
     )
     def initialize_session_data(n_clicks, existing_data):
         if n_clicks is None:
-            return {'id': uuid.uuid4().hex if enable_session_caches else None}
+            return normalize_session_data(existing_data, enable_session_caches)
         else:
             print('Warning! initialize_session_data was called outside of initialization. Ignoring request.',
                   flush=True)
             return existing_data
+
+    snapshot_states = [
+        State('session', 'data'),
+        State('text-input', 'value'),
+        State('file-dropdown', 'value'),
+        State('semitone-pitch', 'value'),
+        State('debug-pitch', 'value'),
+        State('reduce-noise', 'value'),
+        State('crop-silence', 'value'),
+        State('reduce-metallic-sound', 'value'),
+        State('auto-tune-output', 'value'),
+        State('adjust-output-speed', 'value'),
+        State('pitch-batch-enabled', 'value'),
+        State('pitch-batch-values', 'value'),
+    ] + [State(tab.id, 'hidden') for tab in available_tabs] + [
+        State(item, 'value') for tab in available_tabs for item in tab.input_ids
+    ]
+
+    def queue_generation(queue, hardware_selection, session_data, user_text, selected_file,
+                         semitone_pitch, debug_pitch, reduce_noise, crop_silence,
+                         reduce_metallic_noise, auto_tune_output, output_speed_adjustment,
+                         pitch_batch_enabled, pitch_batch_values, tab_values):
+        hidden_states = list(tab_values[:len(available_tabs)])
+        architecture_inputs = list(tab_values[len(available_tabs):])
+        selected_tab = get_selected_tab_object(hidden_states)
+        snapshot = {
+            'hardware_selection': hardware_selection,
+            'user_text': user_text,
+            'selected_file': selected_file,
+            'semitone_pitch': semitone_pitch,
+            'debug_pitch': debug_pitch,
+            'reduce_noise': reduce_noise,
+            'crop_silence': crop_silence,
+            'reduce_metallic_noise': reduce_metallic_noise,
+            'auto_tune_output': auto_tune_output,
+            'output_speed_adjustment': output_speed_adjustment,
+            'pitch_batch_enabled': pitch_batch_enabled,
+            'pitch_batch_values': pitch_batch_values,
+            'hidden_states': hidden_states,
+            'architecture_inputs': architecture_inputs,
+        }
+        return create_generation_request(queue, session_data, selected_tab, snapshot)
+
+    @callback(
+        [Output('cpu-generation-request', 'data'),
+         Output('generation-job-state', 'data', allow_duplicate=True)],
+        [Input('generate-button-cpu', 'n_clicks'), State('hardware-selector', 'value')] + snapshot_states,
+        prevent_initial_call=True,
+    )
+    def queue_cpu_generation(n_clicks, hardware_selection, session_data, user_text, selected_file,
+                             semitone_pitch, debug_pitch, reduce_noise, crop_silence,
+                             reduce_metallic_noise, auto_tune_output, output_speed_adjustment,
+                             pitch_batch_enabled, pitch_batch_values, *tab_values):
+        if not n_clicks:
+            raise PreventUpdate
+        request_data = queue_generation(
+            'cpu', hardware_selection, session_data, user_text, selected_file, semitone_pitch,
+            debug_pitch, reduce_noise, crop_silence, reduce_metallic_noise, auto_tune_output,
+            output_speed_adjustment, pitch_batch_enabled, pitch_batch_values, tab_values,
+        )
+        return request_data, generation_job_view(browser_job(session_data))
+
+    @callback(
+        [Output('gpu-generation-request', 'data'),
+         Output('generation-job-state', 'data', allow_duplicate=True)],
+        [Input('generate-button-gpu', 'n_clicks')] + snapshot_states,
+        prevent_initial_call=True,
+    )
+    def queue_gpu_generation(n_clicks, session_data, user_text, selected_file, semitone_pitch,
+                             debug_pitch, reduce_noise, crop_silence, reduce_metallic_noise,
+                             auto_tune_output, output_speed_adjustment, pitch_batch_enabled,
+                             pitch_batch_values, *tab_values):
+        if not n_clicks:
+            raise PreventUpdate
+        request_data = queue_generation(
+            'gpu', 'GPU', session_data, user_text, selected_file, semitone_pitch, debug_pitch,
+            reduce_noise, crop_silence, reduce_metallic_noise, auto_tune_output,
+            output_speed_adjustment, pitch_batch_enabled, pitch_batch_values, tab_values,
+        )
+        return request_data, generation_job_view(browser_job(session_data))
 
     @callback(
         [Output('banner-announcement', 'children'),
@@ -340,7 +743,122 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
         Input('hardware-selector', 'value')
     )
     def select_generate_button(hardware_selection):
-        return hardware_selection != 'GPU', hardware_selection != 'CPU'
+        return hardware_selection != 'GPU', hardware_selection not in ('Auto', 'CPU')
+
+    @callback(
+        [Output('message', 'children'),
+         Output('generation-render-signature', 'data'),
+         Output('cpu-generation-request', 'data', allow_duplicate=True),
+         Output('gpu-generation-request', 'data', allow_duplicate=True),
+         Output('generation-polled-job-state', 'data')],
+        [Input('generation-poll', 'n_intervals'),
+         Input('generation-result-signal', 'data'),
+         Input('generation-stop-signal', 'data')],
+        [State('session', 'data'),
+         State('generation-render-signature', 'data'),
+         State('cpu-generation-request', 'data'),
+         State('gpu-generation-request', 'data'),
+         State('generation-job-state', 'data')],
+        prevent_initial_call='initial_duplicate',
+    )
+    def poll_generation(_n_intervals, _result_signal, _stop_signal, session_data, rendered_signature,
+                        cpu_request, gpu_request, displayed_job_state):
+        session_data = session_data if isinstance(session_data, dict) else {'id': None}
+        hashes = cache.get_hashes_sorted_by_timestamp(Stage.POSTPROCESSED, session_data.get('id'))
+        signature = list(hashes)
+        if signature == rendered_signature:
+            outputs = no_update
+            signature_output = no_update
+        else:
+            newest = [prepare_postprocessed_display(cache, hashes[0], session_data)] if hashes else []
+            older = [
+                prepare_postprocessed_display(cache, output_hash, session_data)
+                for output_hash in reversed(hashes[1:])
+            ]
+            outputs = older + newest
+            signature_output = signature
+
+        state = browser_job(session_data)
+        state_view = generation_job_view(state)
+        state_output = no_update if state_view == displayed_job_state else state_view
+        cpu_trigger, gpu_trigger = generation_trigger_updates(state, cpu_request, gpu_request)
+
+        return outputs, signature_output, cpu_trigger, gpu_trigger, state_output
+
+    clientside_callback(
+        """
+        function(polled, current) {
+            const noUpdate = window.dash_clientside.no_update;
+            if (!polled || JSON.stringify(polled) === JSON.stringify(current)) {
+                return noUpdate;
+            }
+            if (!current) {
+                return polled;
+            }
+            const active = value =>
+                value && ["queued", "running", "cancelling"].includes(value.status);
+            if (polled.request_id !== current.request_id) {
+                if (active(current) && !active(polled)) {
+                    return noUpdate;
+                }
+                if (active(polled) && !active(current)) {
+                    return polled;
+                }
+            } else {
+                const rank = value => {
+                    if (!value) return -1;
+                    if (["completed", "failed", "cancelled"].includes(value.status)) return 3;
+                    if (value.status === "cancelling") return 2;
+                    if (value.status === "running") return 1;
+                    if (value.status === "queued") return 0;
+                    return -1;
+                };
+                const polledRank = rank(polled);
+                const currentRank = rank(current);
+                if (polledRank > currentRank) {
+                    return polled;
+                }
+                if (polledRank < currentRank) {
+                    return noUpdate;
+                }
+            }
+            return (polled.updated_at || "") >= (current.updated_at || "")
+                ? polled
+                : noUpdate;
+        }
+        """,
+        Output('generation-job-state', 'data', allow_duplicate=True),
+        Input('generation-polled-job-state', 'data'),
+        State('generation-job-state', 'data'),
+        prevent_initial_call=True,
+    )
+
+    @callback(
+        [Output('generate-message', 'children'),
+         Output('generate-message', 'hidden'),
+         Output('cancel-generation', 'hidden'),
+         Output('cancel-generation', 'disabled'),
+         Output('generation-progress', 'children'),
+         Output('generation-progress', 'hidden'),
+         Output('generation-poll', 'disabled')],
+        Input('generation-job-state', 'data'),
+    )
+    def render_generation_controls(job_state):
+        return generation_controls_view(job_state)
+
+    @callback(
+        Output('generation-stop-signal', 'data'),
+        Input('cancel-generation', 'n_clicks'),
+        State('session', 'data'),
+        prevent_initial_call=True,
+    )
+    def stop_generation(n_clicks, session_data):
+        if not n_clicks or not isinstance(session_data, dict):
+            raise PreventUpdate
+        result = cancel_browser_generation(session_data)
+        if result is None:
+            raise PreventUpdate
+        return result
 
     @callback(
         Output('message', 'children', allow_duplicate=True),
@@ -452,10 +970,7 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
         [Input(tab.id + TAB_BUTTON_PREFIX, 'n_clicks') for tab in available_tabs],
     )
     def hide_unused_tabs(*_):
-        hidden_states = [not (tab.id + TAB_BUTTON_PREFIX == ctx.triggered_id) for tab in available_tabs]
-        tabs_css_classes = ['tab-cell' if not tab.id + TAB_BUTTON_PREFIX == ctx.triggered_id else
-                            'tab-cell-selected' for tab in available_tabs]
-        return hidden_states + tabs_css_classes
+        return tab_visibility_and_classes(ctx.triggered_id, available_tabs)
 
     @callback(
         Output('output-speed-adjustment', 'children'),
@@ -519,9 +1034,7 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
         metadata = cache.read_metadata(Stage.RAW, session_data['id'])
         reverse_lookup = {metadata[key]['User File']: key for key in metadata}
         hash_raw = reverse_lookup[selected_file]
-        bytes_raw = cache.read_file_bytes(Stage.RAW, session_data['id'], hash_raw)
-        src = pcc.prepare_src_attribute(bytes_raw, hsc.cache.CACHE_MIMETYPE)
-        return src, False
+        return cache_media.cache_audio_url(Stage.RAW, session_data['id'], hash_raw), False
 
     @callback(
         Output('postprocessing-options', 'hidden'),
@@ -534,15 +1047,17 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
         [Output('generate-button-gpu', 'disabled'),
          Output('generate-button-cpu', 'disabled')],
         [Input('text-input', 'value'),
-         Input('file-dropdown', 'value')] +
+         Input('file-dropdown', 'value'),
+         Input('generation-job-state', 'data')] +
         [Input(tab.id, 'hidden') for tab in available_tabs] +
         [Input(item, 'value') for tab in available_tabs for item in tab.input_ids]
     )
-    def disable_generate_button(user_text, selected_file, *hidden_states_and_options):
+    def disable_generate_button(user_text, selected_file, job_state, *hidden_states_and_options):
         # todo: don't disable the generate button. Instead, highlight the requirements text and whatever the user is
         #  missing in red.
         hidden_states = hidden_states_and_options[:len(available_tabs)]
         option_values = hidden_states_and_options[len(available_tabs):]
+        job_active = generation_jobs.active(job_state)
         tab_object = get_selected_tab_object(hidden_states)
         if tab_object is None:
             return True, True
@@ -554,7 +1069,8 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
             hidden = not tab_object.meets_all_requirements(
                 user_text, selected_file, selected_character, selected_options
             )
-            return hidden, hidden
+            disabled = hidden or job_active
+            return disabled, disabled
 
     # todo: disable the preview button if no audio file is selected.
     @callback(
@@ -582,9 +1098,11 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
         )
 
         # return src
-        bytes_preprocessed = cache.read_file_bytes(Stage.PREPROCESSED, session_data['id'], hash_preprocessed)
-        hash_raw = pcc.lookup_filehash(cache, selected_file, session_data)
-        return pcc.prepare_src_attribute(bytes_preprocessed, hsc.cache.CACHE_MIMETYPE)
+        return cache_media.cache_audio_url(
+            Stage.PREPROCESSED,
+            session_data['id'],
+            hash_preprocessed,
+        )
 
     def get_selected_tab_object(hidden_states):
         # Get the tab that is *not* hidden (i.e. hidden == False)
@@ -601,13 +1119,37 @@ def register_main_callbacks(enable_session_caches, cache_type, architectures):
         if n_clicks:
             # A download button was actually clicked, so return a download.
             hash_postprocessed = ctx.triggered_id['index']
+            metadata = cache.read_metadata(Stage.POSTPROCESSED, session_data['id'])[hash_postprocessed]
+            filename = output_download.descriptive_audio_filename(
+                metadata,
+                hash_postprocessed,
+                output_file_format,
+            )
             with tempfile.TemporaryDirectory() as tempdir:
-                path = os.path.join(tempdir, hash_postprocessed + '.' + output_file_format)
+                path = os.path.join(tempdir, filename)
                 data, sr = cache.read_audio_from_cache(Stage.POSTPROCESSED, session_data['id'], hash_postprocessed)
                 soundfile.write(path, data, sr)
-                return dcc.send_file(path)
+                return dcc.send_file(path, filename=filename)
         else:
             return None
+
+    @callback(
+        Output({'type': 'batch-download', 'index': MATCH}, 'data'),
+        State('session', 'data'),
+        State('output-file-format', 'value'),
+        Input({'type': 'batch-download-button', 'index': MATCH}, 'n_clicks'),
+        prevent_initial_call=True
+    )
+    def download_pitch_batch(session_data, output_file_format, n_clicks):
+        if not n_clicks:
+            return None
+        archive, filename = output_download.create_pitch_batch_archive(
+            cache,
+            session_data['id'],
+            ctx.triggered_id['index'],
+            output_file_format,
+        )
+        return dcc.send_bytes(archive, filename, type='application/zip')
 
     def update_dropdown(cache, filename, session_data):
         raw_metadata = cache.read_metadata(Stage.RAW, session_data['id'])
@@ -661,7 +1203,11 @@ def parse_arguments(arguments):
 
 
 def construct_app_layout(enable_model_management, cache_type, architectures, enable_session_caches):
-    app = Dash(__name__, external_stylesheets=[dbc.themes.SLATE])
+    app = Dash(
+        __name__,
+        external_stylesheets=[dbc.themes.SLATE],
+        meta_tags=[{'name': 'viewport', 'content': 'width=device-width, initial-scale=1'}],
+    )
     tab_buttons, tabs_contents = construct_tabs_interface(architectures, enable_model_management, cache_type)
     app.layout = html.Div(construct_main_interface(tab_buttons, tabs_contents, enable_session_caches))
     app.title = 'Hay Say'
@@ -729,6 +1275,7 @@ def build_app(architectures, update_model_lists_on_startup=False, enable_model_m
     if enable_runtime_admin is None:
         enable_runtime_admin = runtime_client.admin_enabled()
     app = construct_app_layout(enable_model_management, cache_type, architectures, enable_session_caches)
+    cache_media.register_cache_audio_route(app.server, hsc.select_cache_implementation(cache_type))
     register_app_callbacks(architectures, enable_model_management, enable_session_caches, cache_type)
     add_management_components(cache_type, enable_model_management, enable_runtime_admin, architectures, app)
     register_cache_cleanup_callback_if_needed(enable_session_caches, cache_type)

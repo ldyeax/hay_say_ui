@@ -1,8 +1,10 @@
 import base64
+import contextlib
 import importlib.util
 import json
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from enum import Enum
@@ -31,6 +33,18 @@ def load_server_module():
         SVC3_ROOT.parent / "models" / architecture / "characters" / character
     )
     fake_hsc.select_cache_implementation = lambda name: None
+    fake_hsc.model_cpu_bf16_enabled = lambda _model_id: False
+    fake_hsc.runtime_state_with_cpu_bf16 = lambda state, _model_id: {
+        **state,
+        "cpu_bf16": {
+            "environment_variable": "HAY_SAY_SVC3_CPU_BF16_AUTOCAST",
+            "default": False,
+            "requested": False,
+            "source": "default",
+            "amx_available": True,
+            "effective": False,
+        },
+    }
     fake_cache_module = types.ModuleType("hay_say_common.cache")
     fake_cache_module.Stage = Stage
 
@@ -79,12 +93,53 @@ class FakeRuntime:
         self.generate_calls = []
         self.warm_calls = []
         self.unload_calls = []
+        self.cancellation_scope_calls = []
+        self.cancel_calls = []
+        self.cancel_during_generate = False
+        self.commit_calls = 0
 
-    def generate(self, spec, speaker, pitches, source, sample_rate, device, slice_db=-40):
-        self.generate_calls.append((spec, speaker, tuple(pitches), source, sample_rate, device, slice_db))
+    def generate(
+        self,
+        spec,
+        speaker,
+        pitches,
+        source,
+        sample_rate,
+        device,
+        slice_db=-40,
+        cpu_bf16=False,
+        cancellation=None,
+    ):
+        self.generate_calls.append(
+            (spec, speaker, tuple(pitches), source, sample_rate, device, slice_db, cpu_bf16,
+             cancellation)
+        )
+        if self.cancel_during_generate:
+            cancellation.set()
         return [
             (pitch, np.full(4, pitch, dtype=np.float32)) for pitch in pitches
         ], 32000
+
+    @contextlib.contextmanager
+    def cancellation_scope(self, request_id):
+        self.cancellation_scope_calls.append(request_id)
+        cancellation = threading.Event()
+        yield cancellation
+
+    def commit_if_active(self, cancellation, callback):
+        self.raise_if_cancelled(cancellation)
+        self.commit_calls += 1
+        return callback()
+
+    def cancel(self, request_ids):
+        values = list(request_ids)
+        self.cancel_calls.append(values)
+        return {"cancelled_request_ids": values, "active_request_ids": []}
+
+    @staticmethod
+    def raise_if_cancelled(cancellation):
+        if cancellation is not None and cancellation.is_set():
+            raise SERVER.GenerationCancelled("Generation cancelled")
 
     def warm(self, spec, device):
         self.warm_calls.append((spec, device))
@@ -149,6 +204,7 @@ class ServerTests(unittest.TestCase):
             "Output File": "output-hash",
             "GPU ID": "",
             "Session ID": "session-1",
+            "Request ID": "request-1",
         }
 
     def test_legacy_scalar_generate_contract(self):
@@ -162,6 +218,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual("voice", self.runtime.generate_calls[0][1])
         self.assertEqual((2,), self.runtime.generate_calls[0][2])
         self.assertEqual("cpu", self.runtime.generate_calls[0][5])
+        self.assertEqual(["request-1"], self.runtime.cancellation_scope_calls)
+        self.assertIs(self.runtime.generate_calls[0][8].is_set(), False)
+        self.assertEqual(1, self.runtime.commit_calls)
         self.assertEqual(["output-hash"], [item[2] for item in self.cache.saved])
 
     def test_batch_generate_uses_speaker_json_and_saves_every_output(self):
@@ -181,6 +240,20 @@ class ServerTests(unittest.TestCase):
             ["out-low", "out-mid", "out-high"],
             [item[2] for item in self.cache.saved],
         )
+
+    def test_cpu_bf16_is_backend_controlled_and_request_value_is_ignored(self):
+        self.add_character()
+        payload = self.legacy_payload()
+        payload["Options"]["CPU BF16 Autocast"] = "yes"
+        original = SERVER.hsc.model_cpu_bf16_enabled
+        try:
+            SERVER.hsc.model_cpu_bf16_enabled = lambda _model_id: True
+            response = self.client.post("/generate", json=payload)
+        finally:
+            SERVER.hsc.model_cpu_bf16_enabled = original
+
+        self.assertEqual(200, response.status_code)
+        self.assertIs(self.runtime.generate_calls[0][7], True)
 
     def test_explicit_speaker_can_select_a_multispeaker_voice(self):
         self.add_character(speakers={"voice-a": 0, "voice-b": 1}, selected="voice-b")
@@ -219,7 +292,12 @@ class ServerTests(unittest.TestCase):
     def test_lifecycle_and_observability_endpoints(self):
         self.add_character()
         self.assertEqual("ok", self.client.get("/health").get_json()["status"])
-        self.assertEqual("ready-cold", self.client.get("/runtime").get_json()["status"])
+        runtime_state = self.client.get("/runtime").get_json()
+        self.assertEqual("ready-cold", runtime_state["status"])
+        self.assertEqual(
+            "HAY_SAY_SVC3_CPU_BF16_AUTOCAST",
+            runtime_state["cpu_bf16"]["environment_variable"],
+        )
         self.assertEqual("test-gpu", self.client.get("/gpu-info").get_json()[0]["Name"])
 
         warm = self.client.post("/warm", json={"Character": "Test Character", "GPU ID": ""})
@@ -229,6 +307,34 @@ class ServerTests(unittest.TestCase):
         unload = self.client.post("/unload", json={"Character": "Test Character", "GPU ID": ""})
         self.assertEqual(200, unload.status_code)
         self.assertEqual(("Test Character", "cpu"), self.runtime.unload_calls[0])
+
+    def test_cancel_endpoint_deduplicates_request_ids(self):
+        response = self.client.post(
+            "/cancel",
+            json={"Request IDs": ["request-a", "request-b", "request-a"]},
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual([["request-a", "request-b"]], self.runtime.cancel_calls)
+        self.assertEqual(
+            ["request-a", "request-b"], response.get_json()["cancelled_request_ids"]
+        )
+
+    def test_cancelled_generate_never_writes_output(self):
+        self.add_character()
+        self.runtime.cancel_during_generate = True
+
+        response = self.client.post("/generate", json=self.legacy_payload())
+
+        self.assertEqual(409, response.status_code)
+        self.assertEqual("cancelled", response.get_json()["error"]["type"])
+        self.assertEqual([], self.cache.saved)
+
+    def test_cancel_requires_a_nonempty_request_id_array(self):
+        for payload in ({}, {"Request IDs": []}, {"Request IDs": ["not valid"]}):
+            with self.subTest(payload=payload):
+                response = self.client.post("/cancel", json=payload)
+                self.assertEqual(400, response.status_code)
 
     def test_server_has_no_template_or_subprocess_execution_path(self):
         source = SERVER_PATH.read_text(encoding="utf-8")

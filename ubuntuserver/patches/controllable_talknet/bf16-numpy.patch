@@ -1,0 +1,156 @@
+--- a/core/vocoder.py
++++ b/core/vocoder.py
+@@ -13,10 +13,12 @@
+     You should have received a copy of the GNU Affero General Public License
+     along with this program.  If not, see <https://www.gnu.org/licenses/>."""
+ 
++from functools import wraps
++
+ import json
+ import os
+ import sys
+ import numpy as np
+ import resampy
+ import scipy
+ import torch
+@@ -24,18 +26,30 @@
+ sys.path.append("hifi-gan")
+ from denoiser import Denoiser
+ from env import AttrDict
+ from meldataset import MAX_WAV_VALUE, mel_spectrogram
+ from models import Generator
+ 
+ 
++def _run_vocoder_in_fp32(function):
++    """Keep legacy HiFiGAN kernels outside process-wide CPU BF16 autocast."""
++
++    @wraps(function)
++    def wrapped(*args, **kwargs):
++        with torch.cpu.amp.autocast(enabled=False):
++            return function(*args, **kwargs)
++
++    return wrapped
++
++
+ class HiFiGAN:
++    @_run_vocoder_in_fp32
+     def __init__(self, model_path, conf_name, device):
+         # Load HiFi-GAN
+         conf = os.path.join("hifi-gan", conf_name + ".json")
+         with open(conf) as f:
+             json_config = json.loads(f.read())
+         self.h = AttrDict(json_config)
+         torch.manual_seed(self.h.seed)
+         self.hifigan = Generator(self.h).to(torch.device(device))
+         state_dict_g = torch.load(model_path, map_location=torch.device(device))
+         self.hifigan.load_state_dict(state_dict_g["generator"])
+@@ -44,16 +58,18 @@
+         self.denoiser = Denoiser(self.hifigan, mode="normal")
+         self.device = device
+ 
++    @_run_vocoder_in_fp32
+     def vocode(self, spect):
+         y_g_hat = self.hifigan(spect.float())
+         audio = y_g_hat.squeeze()
+         audio = audio * MAX_WAV_VALUE
+         audio_denoised = self.denoiser(audio.view(1, -1), strength=35)[:, 0]
+         return (
+-            audio_denoised.detach().cpu().numpy().reshape(-1).astype(np.int16),
++            audio_denoised.detach().float().cpu().numpy().reshape(-1).astype(np.int16),
+             audio_denoised.detach().cpu(),
+         )
+ 
++    @_run_vocoder_in_fp32
+     def superres(self, audio, original_sr):
+         # Resampling
+         wave = resampy.resample(
+@@ -85,7 +101,7 @@
+         audio2_denoised = self.denoiser(audio2.view(1, -1), strength=35)[:, 0]
+ 
+         # High-pass filter, mixing and denormalizing
+-        audio2_denoised = audio2_denoised.detach().cpu().numpy().reshape(-1)
++        audio2_denoised = audio2_denoised.detach().float().cpu().numpy().reshape(-1)
+         b = scipy.signal.firwin(
+             101, cutoff=10500, fs=self.h.sampling_rate, pass_zero=False
+         )
+--- a/core/reconstruct.py
++++ b/core/reconstruct.py
+@@ -62,11 +62,12 @@
+                     0,  # fmin
+                     8000,  # fmax
+                 )
++                .float()
+                 .cpu()
+                 .numpy()
+             )
+         else:
+-            spect = input.cpu().numpy()
++            spect = input.float().cpu().numpy()
+         spect = (spect + 11.512925) / 6.907755  # log(1e-5) to log(1e1) -> 0 to 2
+         if self.normalize_input:
+             spect /= 2.0
+@@ -81,7 +82,7 @@
+         return spect.unsqueeze(0)
+ 
+     def _postprocess_spect(self, x):
+-        spect = x.cpu().squeeze(0).numpy()
++        spect = x.float().cpu().squeeze(0).numpy()
+         spect = (spect + 1) * 6.907755 - 11.512925
+         return spect
+ 
+@@ -172,6 +173,8 @@
+             z = (
+                 func.interpolate(z.permute(0, 2, 1), size=target_height, mode="linear")
+                 .permute(0, 2, 1)
++                .float()
++                .cpu()
+                 .numpy()
+             )
+         return torch.from_numpy(z).to(self.device)
+--- a/core/extract.py
++++ b/core/extract.py
+@@ -286,7 +286,7 @@
+                 input_signal=test_sample[0], input_signal_length=test_sample[1]
+             )
+ 
+-            log_probs = log_probs[0].cpu().detach().numpy()
++            log_probs = log_probs[0].float().cpu().detach().numpy()
+             target_tokens = self._preprocess_tokens(tokens, blank_id)
+ 
+             f, p = forward_extractor(target_tokens, log_probs, blank_id)
+@@ -403,7 +403,7 @@
+ 
+     def _torchcrepe_f0(self, wav_path, hop_length=256):
+         audio, sr = torchcrepe.load.audio(wav_path)
+-        audio_numpy = audio.squeeze(0).numpy()
++        audio_numpy = audio.squeeze(0).float().cpu().numpy()
+         audio_x = np.arange(0, len(audio_numpy)) / 22050.0
+ 
+         device = "cuda" if torch.cuda.is_available() else "cpu"
+@@ -422,9 +422,9 @@
+         confidence = torchcrepe.filter.median(confidence, 3)
+ 
+         x = np.arange(0, len(audio_numpy), hop_length) / 22050.0
+-        frequency = frequency.squeeze(0).numpy()[: len(x)]
++        frequency = frequency.squeeze(0).float().cpu().numpy()[: len(x)]
+         orig_frequency = np.copy(frequency)
+-        confidence = confidence.squeeze(0).numpy()[: len(x)]
++        confidence = confidence.squeeze(0).float().cpu().numpy()[: len(x)]
+         audio_interp = np.interp(x, audio_x, np.absolute(audio_numpy))
+         weights = [0.5, 0.25, 0.25]
+         audio_smooth = np.convolve(audio_interp, np.array(weights)[::-1], "same")
+--- a/controllable_talknet_cli.py
++++ b/controllable_talknet_cli.py
+@@ -85,9 +85,11 @@
+     if args.reference_audio is not None:
+         _, f0s, f0s_wo_silence, wav_name = controllable_talknet.select_file.__wrapped__(args.reference_audio, [''])
+     drive_id = 'Custom' if args.custom_model else get_drive_id_from_character(args.character)
+-    src, _, _, _ = controllable_talknet.generate_audio.__wrapped__(0, drive_id, args.custom_model, args.text,
++    src, message, _, _ = controllable_talknet.generate_audio.__wrapped__(0, drive_id, args.custom_model, args.text,
+                                                                    args.pitch_options, args.pitch_factor, wav_name,
+                                                                    f0s, f0s_wo_silence)
++    if src is None:
++        raise RuntimeError(message)
+     return get_audio_from_src(src, encoding='ascii')
+ 
+ 

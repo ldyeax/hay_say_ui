@@ -63,6 +63,17 @@ run() {
 	fi
 }
 
+configure_user_service_environment() {
+	local runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$EUID}"
+
+	if [[ -d "$runtime_dir" ]]; then
+		export XDG_RUNTIME_DIR="$runtime_dir"
+	fi
+	if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -S "$runtime_dir/bus" ]]; then
+		export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+	fi
+}
+
 while (($#)); do
 	case "$1" in
 		--source)
@@ -132,6 +143,7 @@ done
 if ((EUID == 0)) && ((!DRY_RUN)); then
 	die 'run the user stage as the target user, not root'
 fi
+configure_user_service_environment
 
 readonly UI_ROOT="$INSTALL_ROOT/hay_say_ui"
 readonly VENV_ROOT="$INSTALL_ROOT/.venvs"
@@ -211,10 +223,76 @@ link_persistent_directory() {
 	fi
 }
 
+runtime_source_sentinels() {
+	case "$1" in
+		controllable_talknet)
+			printf '%s\n' \
+				controllable_talknet_cli.py \
+				models/vqgan32_universal_57000.ckpt
+			;;
+		so_vits_svc_3)
+			printf '%s\n' \
+				inference/infer_tool.py \
+				hubert/hubert-soft-0d54a1f4.pt
+			;;
+		so_vits_svc_4|so_vits_svc_4_dot_1_stable)
+			printf '%s\n' inference/infer_tool.py
+			;;
+		so_vits_svc_5|so_vits_svc_5_v2)
+			printf '%s\n' \
+				svc_inference.py \
+				configs/base.yaml \
+				whisper_pretrain/large-v2.pt \
+				hubert_pretrain/hubert-soft-0d54a1f4.pt \
+				crepe/assets/full.pth
+			;;
+		so_vits_svc_5_v1)
+			printf '%s\n' \
+				svc_inference.py \
+				configs/base.yaml \
+				whisper_pretrain/medium.pt
+			;;
+		rvc)
+			printf '%s\n' \
+				infer/modules/vc/modules.py \
+				assets/hubert/hubert_base.pt \
+				assets/rmvpe/rmvpe.pt
+			;;
+		styletts_2)
+			printf '%s\n' \
+				models.py \
+				Utils/ASR/epoch_00080.pth \
+				Utils/JDC/bst.t7 \
+				Utils/PLBERT/step_1000000.t7
+			;;
+		gpt_so_vits)
+			printf '%s\n' \
+				GPT_SoVITS/inference_cli.py \
+				GPT_SoVITS/inference_webui.py \
+				GPT_SoVITS/pretrained_models/chinese-hubert-base/pytorch_model.bin
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+runtime_source_is_complete() {
+	local name=$1
+	local root=$2
+	local sentinel
+	local found=0
+	while IFS= read -r sentinel; do
+		found=1
+		[[ -s "$root/$sentinel" ]] || return 1
+	done < <(runtime_source_sentinels "$name")
+	((found))
+}
+
 link_runtime_sources() {
 	local manifest="$REPO_CONTENT_ROOT/ubuntuserver/config/images.tsv"
 	local runtime_id image container_path destination extra
-	local name extracted bundled target
+	local name extracted bundled target link_source
 	declare -A linked=()
 
 	while IFS=$'\t' read -r runtime_id image container_path destination extra; do
@@ -228,7 +306,16 @@ link_runtime_sources() {
 		bundled="$UI_ROOT/ubuntuserver/hay_say/$name"
 		target="$INSTALL_ROOT/$name"
 
-		if [[ -e "$extracted" ]]; then
+		if runtime_source_sentinels "$name" >/dev/null 2>&1; then
+			if ! runtime_source_is_complete "$name" "$extracted"; then
+				log "runtime base source is not installed or is incomplete: $name"
+				if [[ -L "$target" && "$(readlink "$target")" == "$bundled" ]]; then
+					run rm -f "$target"
+				fi
+				continue
+			fi
+			link_source=$extracted
+		elif [[ -e "$extracted" ]]; then
 			link_source=$extracted
 		elif [[ -e "$bundled" ]]; then
 			link_source=$bundled
@@ -256,8 +343,11 @@ link_runtime_sources() {
 overlay_bundled_native_sources() {
 	local bundled_root="$REPO_CONTENT_ROOT/ubuntuserver/hay_say"
 	local extracted_root="$DATA_ROOT/runtime-sources"
-	local name
-	for name in so_vits_svc_3 so_vits_svc_3_server; do
+	local name required_path
+	for name in controllable_talknet controllable_talknet_server gpt_so_vits gpt_so_vits_server \
+		rvc rvc_server styletts_2 styletts_2_server \
+		so_vits_svc_3 so_vits_svc_3_server so_vits_svc_4 so_vits_svc_4_server \
+		so_vits_svc_5_server; do
 		[[ -d "$bundled_root/$name" ]] || die "bundled native source is missing: $name"
 		if [[ -d "$extracted_root/$name" ]]; then
 			log "overlaying native $name implementation without deleting extracted assets"
@@ -265,6 +355,12 @@ overlay_bundled_native_sources() {
 				"$bundled_root/$name/" "$extracted_root/$name/"
 		fi
 	done
+	for name in controllable_talknet gpt_so_vits rvc styletts_2; do
+		[[ -s "$bundled_root/$name/hay_say_worker.py" ]] || \
+			die "bundled persistent worker is missing: $name/hay_say_worker.py"
+	done
+	[[ -s "$bundled_root/styletts_2/hay_say_runtime.py" ]] || \
+		die 'bundled StyleTTS2 persistent runtime is missing: styletts_2/hay_say_runtime.py'
 
 	if [[ -d "$extracted_root/so_vits_svc_3" ]]; then
 		run rm -f "$extracted_root/so_vits_svc_3/inference_main_template.py"
@@ -282,15 +378,148 @@ overlay_bundled_native_sources() {
 				die 'bundled SVC3 still contains inference_main_template.py'
 		fi
 	fi
+
+	if [[ -d "$extracted_root/so_vits_svc_4" ]]; then
+		run rm -f "$extracted_root/so_vits_svc_4/inference_main_template.py"
+		if ((!DRY_RUN)); then
+			[[ -f "$extracted_root/so_vits_svc_4/runtime.py" ]] || \
+				die 'SVC4 overlay is missing runtime.py'
+			[[ ! -e "$extracted_root/so_vits_svc_4/inference_main_template.py" ]] || \
+				die 'obsolete SVC4 inference template remains after overlay'
+			! grep -q 'inference_main_template' "$extracted_root/so_vits_svc_4_server/main.py" || \
+				die 'SVC4 server still references the obsolete inference template'
+		fi
+	fi
+
+	if [[ -d "$extracted_root/so_vits_svc_5_server" ]]; then
+		if ((!DRY_RUN)); then
+			for required_path in \
+				so_vits_svc_5_server/main.py \
+				so_vits_svc_5_server/runtime.py \
+				so_vits_svc_5_server/svc5_runtime.py \
+				so_vits_svc_5_server/version_determinator.py \
+				so_vits_svc_5_v1/svc_inference.py \
+				so_vits_svc_5_v1/configs/base.yaml \
+				so_vits_svc_5_v1/whisper_pretrain/medium.pt \
+				so_vits_svc_5_v2/svc_inference.py \
+				so_vits_svc_5_v2/configs/base.yaml \
+				so_vits_svc_5_v2/whisper_pretrain/large-v2.pt \
+				so_vits_svc_5_v2/hubert_pretrain/hubert-soft-0d54a1f4.pt \
+				so_vits_svc_5_v2/crepe/assets/full.pth; do
+				[[ -s "$extracted_root/$required_path" ]] || \
+					die "SVC5 runtime source or frontend asset is missing: $required_path"
+			done
+			grep -q 'from svc5_runtime import' "$extracted_root/so_vits_svc_5_server/main.py" || \
+				die 'SVC5 server is not using the persistent runtime'
+		fi
+	else
+		[[ -f "$bundled_root/so_vits_svc_5_server/runtime.py" && \
+			-f "$bundled_root/so_vits_svc_5_server/svc5_runtime.py" ]] || \
+			die 'bundled SVC5 server runtime is incomplete'
+	fi
 }
 
 # shellcheck source=native-patches.sh
 source "$SCRIPT_DIR/native-patches.sh"
 
+physical_core_count() {
+	local count
+	count=$(lscpu -p=CORE,SOCKET 2>/dev/null | sed '/^#/d' | LC_ALL=C sort -u | wc -l) || true
+	if [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
+		printf '%s\n' "$count"
+		return
+	fi
+	getconf _NPROCESSORS_ONLN
+}
+
+logical_cpu_count() {
+	local count
+	count=$(getconf _NPROCESSORS_ONLN 2>/dev/null) || true
+	if [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
+		printf '%s\n' "$count"
+		return
+	fi
+	physical_core_count
+}
+
+total_memory_mib() {
+	local kib
+	if [[ -n "${HAY_SAY_HOST_MEMORY_MIB:-}" ]]; then
+		[[ "$HAY_SAY_HOST_MEMORY_MIB" =~ ^[1-9][0-9]*$ ]] || \
+			die "HAY_SAY_HOST_MEMORY_MIB must be a positive integer, got: $HAY_SAY_HOST_MEMORY_MIB"
+		printf '%s\n' "$HAY_SAY_HOST_MEMORY_MIB"
+		return
+	fi
+	kib=$(awk '$1 == "MemTotal:" { print $2; exit }' /proc/meminfo 2>/dev/null) || true
+	if [[ "$kib" =~ ^[1-9][0-9]*$ ]]; then
+		printf '%s\n' "$((kib / 1024))"
+		return
+	fi
+	# Keep installation usable if a non-Linux test host cannot report memory.
+	printf '3072\n'
+}
+
+persisted_environment_value() {
+	local name=$1
+	local fallback=$2
+	local current=${!name:-}
+	if [[ -z "$current" && -r "$ENV_FILE" ]]; then
+		current=$(sed -n "s/^${name}='\\([^']*\\)'$/\\1/p" "$ENV_FILE" | tail -n 1)
+	fi
+	printf '%s\n' "${current:-$fallback}"
+}
+
+positive_environment_value() {
+	local name=$1
+	local fallback=$2
+	local value
+	value=$(persisted_environment_value "$name" "$fallback")
+	[[ "$value" =~ ^[1-9][0-9]*$ ]] || die "$name must be a positive integer, got: $value"
+	printf '%s\n' "$value"
+}
+
+nonnegative_environment_value() {
+	local name=$1
+	local fallback=$2
+	local value
+	value=$(persisted_environment_value "$name" "$fallback")
+	[[ "$value" =~ ^[0-9]+$ ]] || die "$name must be a non-negative integer, got: $value"
+	printf '%s\n' "$value"
+}
+
+boolean_environment_value() {
+	local name=$1
+	local fallback=$2
+	local value
+	value=$(persisted_environment_value "$name" "$fallback")
+	case "${value,,}" in
+		1|true|yes|on) printf '1\n' ;;
+		0|false|no|off) printf '0\n' ;;
+		*) die "$name must be a boolean, got: $value" ;;
+	esac
+}
+
 write_environment() {
 	local environment_tmp="$CONFIG_HOME/.environment.$$.tmp"
 	local auth_tmp="$CONFIG_HOME/.ui-auth.$$.tmp"
-	local value ui_username ui_password saved_auth_enabled
+	local value ui_username ui_password saved_auth_enabled physical_cores logical_cpus total_memory
+	local default_cpu_slots aggressive_thread_budget general_memory_slot_cap
+	local rvc_memory_worker_cap talknet_memory_worker_cap default_rvc_cpu_workers default_talknet_cpu_workers
+	local svc3_memory_worker_cap svc4_memory_worker_cap svc5_memory_worker_cap svc5_thread_budget
+	local default_model_threads default_cpu_concurrency default_svc3_pitch_workers default_svc3_cpu_threads
+	local default_svc3_cpu_thread_budget svc3_cpu_thread_budget svc3_cpu_thread_cap
+	local default_svc4_slice_workers default_svc4_threads_per_worker
+	local default_svc5_cpu_workers default_svc5_threads_per_worker default_svc5_startup_concurrency
+	local cpu_slots model_threads model_interop_threads cpu_concurrency
+	local gpu_slots gpu_ids auto_gpu_min_free auto_gpu_max_utilization mixed_pitch_min cpu_pitch_variants
+	local max_batch_download_bytes svc3_pitch_workers svc3_cpu_threads svc4_slice_workers svc4_threads_per_worker
+	local svc5_cpu_workers svc5_threads_per_worker svc5_gpu_workers svc5_startup_concurrency
+	local gpt_sovits_cpu_workers gpt_sovits_gpu_workers
+	local rvc_cpu_workers rvc_gpu_workers talknet_cpu_workers talknet_gpu_workers
+	local styletts_cpu_workers styletts_gpu_workers
+	local talknet_cpu_bf16 svc3_cpu_bf16 svc4_cpu_bf16 svc5_cpu_bf16
+	local rvc_cpu_bf16 styletts_cpu_bf16 gpt_sovits_cpu_bf16
+	local model_idle_ttl_seconds
 	for value in "$INSTALL_ROOT" "$DATA_ROOT" "$UI_ROOT" "$UI_VENV" "$CONFIG_HOME" "$STATE_HOME"; do
 		[[ "$value" != *$'\n'* && "$value" != *"'"* ]] || die "unsupported quote or newline in path: $value"
 	done
@@ -306,6 +535,149 @@ write_environment() {
 	fi
 
 	umask 077
+	physical_cores=$(physical_core_count)
+	logical_cpus=$(logical_cpu_count)
+	((logical_cpus >= physical_cores)) || logical_cpus=$physical_cores
+	total_memory=$(total_memory_mib)
+
+	# Native inference is model-replica limited rather than Celery limited. Admit
+	# one independent request per four physical cores and deliberately budget 1.5
+	# logical CPUs of math work per request. RAM remains the hard backstop.
+	default_cpu_slots=$((physical_cores / 4))
+	((default_cpu_slots >= 1)) || default_cpu_slots=1
+	((default_cpu_slots <= 32)) || default_cpu_slots=32
+	general_memory_slot_cap=$((total_memory * 9 / 10 / 4096))
+	((general_memory_slot_cap >= 1)) || general_memory_slot_cap=1
+	if ((general_memory_slot_cap < default_cpu_slots)); then
+		default_cpu_slots=$general_memory_slot_cap
+	fi
+	aggressive_thread_budget=$((logical_cpus * 3 / 2))
+	((aggressive_thread_budget >= 1)) || aggressive_thread_budget=1
+	default_model_threads=$(((aggressive_thread_budget + default_cpu_slots - 1) / default_cpu_slots))
+	default_cpu_concurrency=$(((default_cpu_slots * 4 + 2) / 3))
+	((default_cpu_concurrency >= default_cpu_slots)) || default_cpu_concurrency=$default_cpu_slots
+	((default_cpu_concurrency <= 48)) || default_cpu_concurrency=48
+
+	# SVC3 shares HuBERT but keeps a complete VITS replica for each pitch lane.
+	# Favor lane parallelism and reserve only 10% of host memory for the OS and
+	# other services. The 2 GiB allowance is intentionally generous per replica.
+	svc3_memory_worker_cap=$((total_memory * 9 / 10 / 2048))
+	((svc3_memory_worker_cap >= 1)) || svc3_memory_worker_cap=1
+	default_svc3_pitch_workers=$((physical_cores * 2 / 5))
+	((default_svc3_pitch_workers >= 1)) || default_svc3_pitch_workers=1
+	((default_svc3_pitch_workers <= 32)) || default_svc3_pitch_workers=32
+	if ((svc3_memory_worker_cap < default_svc3_pitch_workers)); then
+		default_svc3_pitch_workers=$svc3_memory_worker_cap
+	fi
+	default_svc3_cpu_thread_budget=$((logical_cpus * 2))
+
+	# Every SVC4 slice lane owns a complete model replica. Budget 3 GiB each,
+	# then use SMT siblings across the pool; the native runtime caps this at 64.
+	svc4_memory_worker_cap=$((total_memory * 9 / 10 / 3072))
+	((svc4_memory_worker_cap >= 1)) || svc4_memory_worker_cap=1
+	default_svc4_slice_workers=$logical_cpus
+	((default_svc4_slice_workers <= 64)) || default_svc4_slice_workers=64
+	if ((svc4_memory_worker_cap < default_svc4_slice_workers)); then
+		default_svc4_slice_workers=$svc4_memory_worker_cap
+	fi
+	default_svc4_threads_per_worker=$(((logical_cpus + default_svc4_slice_workers - 1) / default_svc4_slice_workers))
+	((default_svc4_threads_per_worker >= 1)) || default_svc4_threads_per_worker=1
+
+	# SVC5 replicas keep the generator warm and may lazily host a shared frontend
+	# for distinct inputs. Budget 4 GiB per lane, cap at 32, and target 1.6x
+	# logical-CPU oversubscription across them.
+	svc5_memory_worker_cap=$((total_memory * 9 / 10 / 4096))
+	((svc5_memory_worker_cap >= 1)) || svc5_memory_worker_cap=1
+	default_svc5_cpu_workers=$((physical_cores * 2 / 5))
+	((default_svc5_cpu_workers >= 1)) || default_svc5_cpu_workers=1
+	((default_svc5_cpu_workers <= 32)) || default_svc5_cpu_workers=32
+	if ((svc5_memory_worker_cap < default_svc5_cpu_workers)); then
+		default_svc5_cpu_workers=$svc5_memory_worker_cap
+	fi
+	svc5_thread_budget=$((logical_cpus * 8 / 5))
+	((svc5_thread_budget >= 1)) || svc5_thread_budget=1
+
+	# Persistent legacy workers retain complete model replicas. Use RAM as the
+	# primary cap and intentionally oversubscribe their math threads.
+	rvc_memory_worker_cap=$((total_memory * 9 / 10 / 3072))
+	((rvc_memory_worker_cap >= 1)) || rvc_memory_worker_cap=1
+	default_rvc_cpu_workers=$((physical_cores * 2 / 5))
+	((default_rvc_cpu_workers >= 1)) || default_rvc_cpu_workers=1
+	((default_rvc_cpu_workers <= 32)) || default_rvc_cpu_workers=32
+	if ((rvc_memory_worker_cap < default_rvc_cpu_workers)); then
+		default_rvc_cpu_workers=$rvc_memory_worker_cap
+	fi
+	talknet_memory_worker_cap=$((total_memory * 9 / 10 / 6144))
+	((talknet_memory_worker_cap >= 1)) || talknet_memory_worker_cap=1
+	default_talknet_cpu_workers=$((physical_cores / 5))
+	((default_talknet_cpu_workers >= 1)) || default_talknet_cpu_workers=1
+	((default_talknet_cpu_workers <= 16)) || default_talknet_cpu_workers=16
+	if ((talknet_memory_worker_cap < default_talknet_cpu_workers)); then
+		default_talknet_cpu_workers=$talknet_memory_worker_cap
+	fi
+
+	cpu_slots=$(positive_environment_value HAY_SAY_CPU_INFERENCE_SLOTS "$default_cpu_slots")
+	model_threads=$(positive_environment_value HAY_SAY_MODEL_CPU_THREADS "$default_model_threads")
+	model_interop_threads=$(positive_environment_value HAY_SAY_MODEL_CPU_INTEROP_THREADS 1)
+	cpu_concurrency=$(positive_environment_value HAY_SAY_CPU_CONCURRENCY "$default_cpu_concurrency")
+	gpu_slots=$(positive_environment_value HAY_SAY_GPU_INFERENCE_SLOTS 1)
+	auto_gpu_min_free=$(nonnegative_environment_value HAY_SAY_AUTO_GPU_MIN_FREE_MIB 4096)
+	auto_gpu_max_utilization=$(nonnegative_environment_value HAY_SAY_AUTO_GPU_MAX_UTILIZATION 95)
+	((auto_gpu_max_utilization <= 100)) || die 'HAY_SAY_AUTO_GPU_MAX_UTILIZATION must not exceed 100'
+	mixed_pitch_min=$(positive_environment_value HAY_SAY_MIXED_PITCH_MIN_VARIANTS 3)
+	svc3_pitch_workers=$(positive_environment_value HAY_SAY_SVC3_CPU_PITCH_WORKERS "$default_svc3_pitch_workers")
+	svc3_cpu_thread_budget=$(positive_environment_value \
+		HAY_SAY_SVC3_CPU_THREAD_BUDGET "$default_svc3_cpu_thread_budget")
+	((svc3_cpu_thread_budget >= svc3_pitch_workers)) || \
+		die 'HAY_SAY_SVC3_CPU_THREAD_BUDGET must be at least HAY_SAY_SVC3_CPU_PITCH_WORKERS'
+	default_svc3_cpu_threads=$((svc3_cpu_thread_budget / svc3_pitch_workers))
+	svc3_cpu_threads=$(positive_environment_value HAY_SAY_SVC3_CPU_THREADS "$default_svc3_cpu_threads")
+	svc3_cpu_thread_cap=$default_svc3_cpu_threads
+	if ((svc3_cpu_threads > svc3_cpu_thread_cap)); then
+		printf 'Reducing HAY_SAY_SVC3_CPU_THREADS from %s to %s so %s pitch workers stay within HAY_SAY_SVC3_CPU_THREAD_BUDGET=%s.\n' \
+			"$svc3_cpu_threads" "$svc3_cpu_thread_cap" "$svc3_pitch_workers" "$svc3_cpu_thread_budget" >&2
+		svc3_cpu_threads=$svc3_cpu_thread_cap
+	fi
+	svc4_slice_workers=$(positive_environment_value \
+		HAY_SAY_SVC4_CPU_SLICE_WORKERS "$default_svc4_slice_workers")
+	((svc4_slice_workers <= 64)) || die 'HAY_SAY_SVC4_CPU_SLICE_WORKERS must not exceed 64'
+	svc4_threads_per_worker=$(positive_environment_value \
+		HAY_SAY_SVC4_CPU_THREADS_PER_WORKER "$default_svc4_threads_per_worker")
+	svc5_cpu_workers=$(positive_environment_value HAY_SAY_SVC5_CPU_WORKERS "$default_svc5_cpu_workers")
+	default_svc5_threads_per_worker=$(((svc5_thread_budget + svc5_cpu_workers - 1) / svc5_cpu_workers))
+	svc5_threads_per_worker=$(positive_environment_value \
+		HAY_SAY_SVC5_CPU_THREADS_PER_WORKER "$default_svc5_threads_per_worker")
+	svc5_gpu_workers=$(positive_environment_value HAY_SAY_SVC5_GPU_WORKERS 1)
+	rvc_cpu_workers=$(positive_environment_value HAY_SAY_RVC_CPU_WORKERS "$default_rvc_cpu_workers")
+	rvc_gpu_workers=$(positive_environment_value HAY_SAY_RVC_GPU_WORKERS 1)
+	talknet_cpu_workers=$(positive_environment_value HAY_SAY_TALKNET_CPU_WORKERS "$default_talknet_cpu_workers")
+	talknet_gpu_workers=$(positive_environment_value HAY_SAY_TALKNET_GPU_WORKERS 1)
+	gpt_sovits_cpu_workers=$(positive_environment_value \
+		HAY_SAY_GPT_SOVITS_CPU_WORKERS "$default_talknet_cpu_workers")
+	gpt_sovits_gpu_workers=$(positive_environment_value HAY_SAY_GPT_SOVITS_GPU_WORKERS 1)
+	styletts_cpu_workers=$(positive_environment_value \
+		HAY_SAY_STYLETTS_CPU_WORKERS "$default_talknet_cpu_workers")
+	styletts_gpu_workers=$(positive_environment_value HAY_SAY_STYLETTS_GPU_WORKERS 1)
+	talknet_cpu_bf16=$(boolean_environment_value HAY_SAY_TALKNET_CPU_BF16_AUTOCAST 0)
+	svc3_cpu_bf16=$(boolean_environment_value HAY_SAY_SVC3_CPU_BF16_AUTOCAST 0)
+	svc4_cpu_bf16=$(boolean_environment_value HAY_SAY_SVC4_CPU_BF16_AUTOCAST 1)
+	svc5_cpu_bf16=$(boolean_environment_value HAY_SAY_SVC5_CPU_BF16_AUTOCAST 0)
+	rvc_cpu_bf16=$(boolean_environment_value HAY_SAY_RVC_CPU_BF16_AUTOCAST 0)
+	styletts_cpu_bf16=$(boolean_environment_value HAY_SAY_STYLETTS_CPU_BF16_AUTOCAST 1)
+	gpt_sovits_cpu_bf16=$(boolean_environment_value HAY_SAY_GPT_SOVITS_CPU_BF16_AUTOCAST 0)
+	default_svc5_startup_concurrency=$((svc5_cpu_workers + svc5_gpu_workers))
+	((default_svc5_startup_concurrency <= 8)) || default_svc5_startup_concurrency=8
+	svc5_startup_concurrency=$(positive_environment_value \
+		HAY_SAY_SVC5_STARTUP_CONCURRENCY "$default_svc5_startup_concurrency")
+	((svc5_startup_concurrency <= svc5_cpu_workers + svc5_gpu_workers)) || \
+		die 'HAY_SAY_SVC5_STARTUP_CONCURRENCY must not exceed total SVC5 workers'
+	model_idle_ttl_seconds=$(positive_environment_value HAY_SAY_MODEL_IDLE_TTL_SECONDS 1800)
+	((model_idle_ttl_seconds >= 1800)) || model_idle_ttl_seconds=1800
+	cpu_pitch_variants=$(positive_environment_value \
+		HAY_SAY_AUTO_CPU_PITCH_VARIANTS $((svc3_pitch_workers < 4 ? svc3_pitch_workers : 4)))
+	max_batch_download_bytes=$(positive_environment_value HAY_SAY_MAX_BATCH_DOWNLOAD_BYTES 268435456)
+	gpu_ids=$(persisted_environment_value HAY_SAY_GPU_IDS 0)
+	[[ "$gpu_ids" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "HAY_SAY_GPU_IDS must be comma-separated GPU indices, got: $gpu_ids"
 	if [[ -r "$UI_AUTH_FILE" ]]; then
 		saved_auth_enabled=$(awk -F= '$1 == "enabled" { print substr($0, 9); exit }' "$UI_AUTH_FILE")
 		ui_username=$(awk -F= '$1 == "username" { print substr($0, 10); exit }' "$UI_AUTH_FILE")
@@ -341,6 +713,42 @@ write_environment() {
 		printf "HAY_SAY_REDIS_URL='redis+socket://%s/redis.sock'\n" "$HOME"
 		printf "HAY_SAY_RUNTIME_MANAGER_URL='http://127.0.0.1:6588'\n"
 		printf "HAY_SAY_NATIVE='1'\n"
+		printf "HAY_SAY_GPU_IDS='%s'\n" "$gpu_ids"
+		printf "HAY_SAY_CPU_CONCURRENCY='%s'\n" "$cpu_concurrency"
+		printf "HAY_SAY_CPU_INFERENCE_SLOTS='%s'\n" "$cpu_slots"
+		printf "HAY_SAY_GPU_INFERENCE_SLOTS='%s'\n" "$gpu_slots"
+		printf "HAY_SAY_MODEL_CPU_THREADS='%s'\n" "$model_threads"
+		printf "HAY_SAY_MODEL_CPU_INTEROP_THREADS='%s'\n" "$model_interop_threads"
+		printf "HAY_SAY_AUTO_GPU_MIN_FREE_MIB='%s'\n" "$auto_gpu_min_free"
+		printf "HAY_SAY_AUTO_GPU_MAX_UTILIZATION='%s'\n" "$auto_gpu_max_utilization"
+		printf "HAY_SAY_MIXED_PITCH_MIN_VARIANTS='%s'\n" "$mixed_pitch_min"
+		printf "HAY_SAY_AUTO_CPU_PITCH_VARIANTS='%s'\n" "$cpu_pitch_variants"
+		printf "HAY_SAY_SVC3_CPU_PITCH_WORKERS='%s'\n" "$svc3_pitch_workers"
+		printf "HAY_SAY_SVC3_CPU_THREAD_BUDGET='%s'\n" "$svc3_cpu_thread_budget"
+		printf "HAY_SAY_SVC3_CPU_THREADS='%s'\n" "$svc3_cpu_threads"
+		printf "HAY_SAY_SVC4_CPU_SLICE_WORKERS='%s'\n" "$svc4_slice_workers"
+		printf "HAY_SAY_SVC4_CPU_THREADS_PER_WORKER='%s'\n" "$svc4_threads_per_worker"
+		printf "HAY_SAY_SVC5_CPU_WORKERS='%s'\n" "$svc5_cpu_workers"
+		printf "HAY_SAY_SVC5_CPU_THREADS_PER_WORKER='%s'\n" "$svc5_threads_per_worker"
+		printf "HAY_SAY_SVC5_GPU_WORKERS='%s'\n" "$svc5_gpu_workers"
+		printf "HAY_SAY_SVC5_STARTUP_CONCURRENCY='%s'\n" "$svc5_startup_concurrency"
+		printf "HAY_SAY_RVC_CPU_WORKERS='%s'\n" "$rvc_cpu_workers"
+		printf "HAY_SAY_RVC_GPU_WORKERS='%s'\n" "$rvc_gpu_workers"
+		printf "HAY_SAY_TALKNET_CPU_WORKERS='%s'\n" "$talknet_cpu_workers"
+		printf "HAY_SAY_TALKNET_GPU_WORKERS='%s'\n" "$talknet_gpu_workers"
+		printf "HAY_SAY_GPT_SOVITS_CPU_WORKERS='%s'\n" "$gpt_sovits_cpu_workers"
+		printf "HAY_SAY_GPT_SOVITS_GPU_WORKERS='%s'\n" "$gpt_sovits_gpu_workers"
+		printf "HAY_SAY_STYLETTS_CPU_WORKERS='%s'\n" "$styletts_cpu_workers"
+		printf "HAY_SAY_STYLETTS_GPU_WORKERS='%s'\n" "$styletts_gpu_workers"
+		printf "HAY_SAY_TALKNET_CPU_BF16_AUTOCAST='%s'\n" "$talknet_cpu_bf16"
+		printf "HAY_SAY_SVC3_CPU_BF16_AUTOCAST='%s'\n" "$svc3_cpu_bf16"
+		printf "HAY_SAY_SVC4_CPU_BF16_AUTOCAST='%s'\n" "$svc4_cpu_bf16"
+		printf "HAY_SAY_SVC5_CPU_BF16_AUTOCAST='%s'\n" "$svc5_cpu_bf16"
+		printf "HAY_SAY_RVC_CPU_BF16_AUTOCAST='%s'\n" "$rvc_cpu_bf16"
+		printf "HAY_SAY_STYLETTS_CPU_BF16_AUTOCAST='%s'\n" "$styletts_cpu_bf16"
+		printf "HAY_SAY_GPT_SOVITS_CPU_BF16_AUTOCAST='%s'\n" "$gpt_sovits_cpu_bf16"
+		printf "HAY_SAY_MODEL_IDLE_TTL_SECONDS='%s'\n" "$model_idle_ttl_seconds"
+		printf "HAY_SAY_MAX_BATCH_DOWNLOAD_BYTES='%s'\n" "$max_batch_download_bytes"
 		printf "HAY_SAY_UI_AUTH_ENABLED='%s'\n" "$UI_AUTH_ENABLED"
 		printf "HAY_SAY_UI_USERNAME='%s'\n" "$ui_username"
 		printf "HAY_SAY_UI_PASSWORD='%s'\n" "$ui_password"
@@ -517,6 +925,16 @@ install_ui_venv() {
 		"$REPO_CONTENT_ROOT/ubuntuserver/runtime/requirements.txt"
 }
 
+install_torch_thread_bootstrap() {
+	local venv_path=$1
+	local python_version=$2
+	local site_packages="$venv_path/lib/python$python_version/site-packages"
+	run install -m 644 "$REPO_CONTENT_ROOT/hay_say_torch_bootstrap.py" \
+		"$site_packages/hay_say_torch_bootstrap.py"
+	run install -m 644 "$REPO_CONTENT_ROOT/ubuntuserver/config/hay_say_torch_bootstrap.pth" \
+		"$site_packages/hay_say_torch_bootstrap.pth"
+}
+
 install_runtime_venvs() {
 	local registry="$REPO_CONTENT_ROOT/ubuntuserver/config/runtime-venvs.tsv"
 	local runtime_id python_version requirements_path extra
@@ -532,10 +950,15 @@ install_runtime_venvs() {
 			log "skipping $runtime_id environment until its image is extracted"
 			continue
 		fi
+		if ((!DRY_RUN)) && ! runtime_source_is_complete "$runtime_id" "$runtime_source"; then
+			log "skipping $runtime_id environment until its complete base source is extracted"
+			continue
+		fi
 		venv_path="$VENV_ROOT/$runtime_id"
 		log "checking runtime environment: $runtime_id (Python $python_version)"
 		sync_venv "$venv_path" "$python_version" "$requirements"
 		normalize_runtime_binaries "$runtime_id" "$venv_path" "$python_version"
+		install_torch_thread_bootstrap "$venv_path" "$python_version"
 
 	done < "$registry"
 }

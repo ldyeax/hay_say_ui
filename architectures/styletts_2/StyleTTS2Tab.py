@@ -24,6 +24,10 @@ CONFIG_FILE_EXTENSION_ALT = '.yaml'
 
 class StyleTTS2Tab(AbstractTab):
     @property
+    def supports_parallel_requests(self):
+        return True
+
+    @property
     def cache_generated_output(self):
         return False
 

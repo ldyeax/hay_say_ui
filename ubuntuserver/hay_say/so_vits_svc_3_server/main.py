@@ -25,11 +25,19 @@ DEFAULT_PORT = int(os.environ.get("HAY_SAY_SVC3_PORT", os.environ.get("SVC3_PORT
 if ARCHITECTURE_ROOT not in sys.path:
     sys.path.insert(0, ARCHITECTURE_ROOT)
 
-from inference.runtime import ModelCache, ModelSpec, SvcRuntime, normalize_device  # noqa: E402
+from inference.runtime import (  # noqa: E402
+    GenerationCancelled,
+    ModelCache,
+    ModelSpec,
+    SvcRuntime,
+    file_revision,
+    normalize_device,
+)
 
 
 SAFE_CACHE_KEY = re.compile(r"^[A-Za-z0-9_.-]{1,255}$")
 MAX_PITCH_BATCH = 64
+MAX_CANCEL_BATCH = 256
 
 
 class RequestError(Exception):
@@ -46,7 +54,9 @@ class GenerateRequest:
     pitches: tuple
     output_names: tuple
     device: str
+    cpu_bf16: bool
     session_id: object
+    request_id: object
     slice_db: float
     spec: ModelSpec
 
@@ -89,7 +99,13 @@ class ModelResolver:
         if not isinstance(speakers, dict) or not speakers:
             raise RequestError("config.json must contain a non-empty 'spk' object")
         speaker = self._resolve_speaker(character_dir, speakers, requested_speaker)
-        spec = ModelSpec(character, str(model_paths[0]), str(config_path))
+        spec = ModelSpec(
+            character,
+            str(model_paths[0]),
+            str(config_path),
+            file_revision(model_paths[0]),
+            file_revision(config_path),
+        )
         return spec, speaker, sorted(speakers.keys())
 
     @staticmethod
@@ -171,6 +187,18 @@ def require_object(value, label):
     return value
 
 
+def parse_cancel_request_ids(payload):
+    payload = require_object(payload, "Request body")
+    values = payload.get("Request IDs")
+    if not isinstance(values, list) or not values:
+        raise RequestError("Request IDs must be a non-empty array")
+    if len(values) > MAX_CANCEL_BATCH:
+        raise RequestError("Request IDs may contain at most {} entries".format(MAX_CANCEL_BATCH))
+    return tuple(dict.fromkeys(
+        validate_cache_key(value, "Request IDs") for value in values
+    ))
+
+
 def parse_generate_request(payload, resolver):
     payload = require_object(payload, "Request body")
     inputs = require_object(payload.get("Inputs"), "Inputs")
@@ -209,6 +237,8 @@ def parse_generate_request(payload, resolver):
     except ValueError as exc:
         raise RequestError(str(exc)) from exc
     session_id = validate_cache_key(payload.get("Session ID"), "Session ID", allow_none=True)
+    request_id = validate_cache_key(payload.get("Request ID"), "Request ID", allow_none=True)
+    cpu_bf16 = device == "cpu" and hsc.model_cpu_bf16_enabled(ARCHITECTURE_NAME)
 
     slice_db = options.get("Slice Threshold", -40.0)
     if isinstance(slice_db, bool) or not isinstance(slice_db, (int, float)):
@@ -225,7 +255,9 @@ def parse_generate_request(payload, resolver):
         pitches=pitches,
         output_names=output_names,
         device=device,
+        cpu_bf16=cpu_bf16,
         session_id=session_id,
+        request_id=request_id,
         slice_db=slice_db,
         spec=spec,
     )
@@ -256,6 +288,10 @@ def register_methods(cache, runtime=None, application=None, character_dir_func=N
     def handle_request_error(error):
         return json_response(str(error), error.status_code, error_type="bad_request")
 
+    @application.errorhandler(GenerationCancelled)
+    def handle_generation_cancelled(error):
+        return json_response(str(error), 409, error_type="cancelled", cancelled=True)
+
     @application.errorhandler(Exception)
     def handle_unexpected_error(error):
         if isinstance(error, HTTPException):
@@ -270,44 +306,58 @@ def register_methods(cache, runtime=None, application=None, character_dir_func=N
     @application.route("/generate", methods=["POST"])
     def generate():
         parsed = parse_generate_request(request.get_json(silent=True), resolver)
-        if hasattr(cache, "file_is_already_cached") and not cache.file_is_already_cached(
-            Stage.PREPROCESSED, parsed.session_id, parsed.input_name
-        ):
-            raise RequestError(
-                "Input audio {!r} was not found in the preprocess cache".format(parsed.input_name),
-                404,
-            )
-        try:
-            source_audio, sample_rate = cache.read_audio_from_cache(
+        with runtime.cancellation_scope(parsed.request_id) as cancellation:
+            if hasattr(cache, "file_is_already_cached") and not cache.file_is_already_cached(
                 Stage.PREPROCESSED, parsed.session_id, parsed.input_name
-            )
-        except Exception as exc:
-            raise RequestError(
-                "Unable to read input audio {!r} from the preprocess cache".format(parsed.input_name),
-                404,
-            ) from exc
-
-        outputs, output_sample_rate = runtime.generate(
-            parsed.spec,
-            parsed.speaker,
-            parsed.pitches,
-            source_audio,
-            sample_rate,
-            parsed.device,
-            slice_db=parsed.slice_db,
-        )
-        response_outputs = []
-        with cache_write_lock:
-            for output_name, (pitch, output_audio) in zip(parsed.output_names, outputs):
-                cache.save_audio_to_cache(
-                    Stage.OUTPUT,
-                    parsed.session_id,
-                    output_name,
-                    output_audio,
-                    output_sample_rate,
+            ):
+                raise RequestError(
+                    "Input audio {!r} was not found in the preprocess cache".format(parsed.input_name),
+                    404,
                 )
-                response_outputs.append({"pitch_shift": pitch, "output_file": output_name})
-        return json_response(outputs=response_outputs, device=parsed.device)
+            try:
+                source_audio, sample_rate = cache.read_audio_from_cache(
+                    Stage.PREPROCESSED, parsed.session_id, parsed.input_name
+                )
+            except Exception as exc:
+                raise RequestError(
+                    "Unable to read input audio {!r} from the preprocess cache".format(parsed.input_name),
+                    404,
+                ) from exc
+
+            outputs, output_sample_rate = runtime.generate(
+                parsed.spec,
+                parsed.speaker,
+                parsed.pitches,
+                source_audio,
+                sample_rate,
+                parsed.device,
+                slice_db=parsed.slice_db,
+                cpu_bf16=parsed.cpu_bf16,
+                cancellation=cancellation,
+            )
+            runtime.raise_if_cancelled(cancellation)
+            def commit_outputs():
+                response_outputs = []
+                with cache_write_lock:
+                    for output_name, (pitch, output_audio) in zip(parsed.output_names, outputs):
+                        cache.save_audio_to_cache(
+                            Stage.OUTPUT,
+                            parsed.session_id,
+                            output_name,
+                            output_audio,
+                            output_sample_rate,
+                        )
+                        response_outputs.append({"pitch_shift": pitch, "output_file": output_name})
+                return response_outputs
+
+            response_outputs = runtime.commit_if_active(cancellation, commit_outputs)
+            return json_response(outputs=response_outputs, device=parsed.device)
+
+    @application.route("/cancel", methods=["POST"])
+    def cancel():
+        request_ids = parse_cancel_request_ids(request.get_json(silent=True))
+        result = runtime.cancel(request_ids)
+        return json_response(**result)
 
     @application.route("/health", methods=["GET"])
     def health():
@@ -325,7 +375,8 @@ def register_methods(cache, runtime=None, application=None, character_dir_func=N
 
     @application.route("/runtime", methods=["GET"])
     def runtime_state():
-        return jsonify(runtime.state())
+        state = hsc.runtime_state_with_cpu_bf16(runtime.state(), ARCHITECTURE_NAME)
+        return jsonify(state)
 
     @application.route("/warm", methods=["POST"])
     @application.route("/runtime/warm", methods=["POST"])

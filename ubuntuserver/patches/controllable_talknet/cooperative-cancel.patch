@@ -1,0 +1,93 @@
+--- a/controllable_talknet_cli.py
++++ b/controllable_talknet_cli.py
+@@ -80,14 +80,14 @@
+         os.makedirs(RESULTS_DIR)
+ 
+ 
+-def generate_audio(args) -> (float, int):
++def generate_audio(args, cancel_check=None) -> (float, int):
+     f0s, f0s_wo_silence, wav_name = None, None, None
+     if args.reference_audio is not None:
+         _, f0s, f0s_wo_silence, wav_name = controllable_talknet.select_file.__wrapped__(args.reference_audio, [''])
+     drive_id = 'Custom' if args.custom_model else get_drive_id_from_character(args.character)
+     src, message, _, _ = controllable_talknet.generate_audio.__wrapped__(0, drive_id, args.custom_model, args.text,
+                                                                    args.pitch_options, args.pitch_factor, wav_name,
+-                                                                   f0s, f0s_wo_silence)
++                                                                   f0s, f0s_wo_silence, cancel_check)
+     if src is None:
+         raise RuntimeError(message)
+     return get_audio_from_src(src, encoding='ascii')
+--- a/controllable_talknet.py
++++ b/controllable_talknet.py
+@@ -685,9 +685,12 @@
+     wav_name,
+     f0s,
+     f0s_wo_silence,
++    cancel_check=None,
+ ):
+     global tnmodel, tnpath, tndurs, tnpitch, voc, last_voc, sr_voc, rec_voc
+ 
++    if cancel_check is not None:
++        cancel_check()
+     if n_clicks is None:
+         raise PreventUpdate
+     if model is None:
+@@ -716,6 +719,8 @@
+             playback_hide,
+             None,
+         ]
++    if cancel_check is not None:
++        cancel_check()
+ 
+     try:
+         with torch.no_grad():
+@@ -743,6 +748,8 @@
+                     tnpitch = None
+                 tnmodel.eval()
+                 tnpath = talknet_path
++            if cancel_check is not None:
++                cancel_check()
+ 
+             # Generate spectrogram
+             token_list, tokens, arpa = extract_dur.get_tokens(transcript)
+@@ -772,12 +779,16 @@
+                     .to(DEVICE),
+                     f0=torch.FloatTensor(f0s).view(1, -1).to(DEVICE),
+                 )
++            if cancel_check is not None:
++                cancel_check()
+ 
+             # Vocoding
+             if last_voc != vocoder_path:
+                 voc = vocoder.HiFiGAN(vocoder_path, "config_v1", DEVICE)
+                 last_voc = vocoder_path
+             audio, audio_torch = voc.vocode(spect)
++            if cancel_check is not None:
++                cancel_check()
+ 
+             # Reconstruction
+             if "srec" in pitch_options:
+@@ -795,17 +806,23 @@
+                         os.path.join(RUN_PATH, "models", "hifirec"), "config_v1", DEVICE
+                     )
+                 audio, audio_torch = rec_voc.vocode(new_spect)
++                if cancel_check is not None:
++                    cancel_check()
+ 
+             # Auto-tuning
+             if "pc" in pitch_options and "dra" not in pitch_options:
+                 audio = extract_pitch.auto_tune(audio, audio_torch, f0s_wo_silence)
++                if cancel_check is not None:
++                    cancel_check()
+ 
+             # Super-resolution
+             if sr_voc is None:
+                 sr_voc = vocoder.HiFiGAN(
+                     os.path.join(RUN_PATH, "models", "hifisr"), "config_32k", DEVICE
+                 )
+             sr_mix, new_rate = sr_voc.superres(audio, 22050)
++            if cancel_check is not None:
++                cancel_check()
+ 
+             # Create buffer
+             buffer = io.BytesIO()
